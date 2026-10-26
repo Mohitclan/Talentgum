@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ras"
+version = "0.1.0"
+description = "Recording Assessment System: score-aware keyboard performance assessment"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "numpy<2",
+  "scipy",
+  "soundfile",
+  "librosa",
+  "pretty_midi",
+  "partitura",
+  "parangonar",
+  "mir_eval",
+  "pydantic>=2",
+  "typer",
+]
+
+[project.optional-dependencies]
+transkun = ["torch", "transkun"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+ras = "ras.tools.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["ras*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow' -q"
+markers = ["slow: needs a neural transcription model"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

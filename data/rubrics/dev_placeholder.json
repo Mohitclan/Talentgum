@@ -1,0 +1,24 @@
+{
+  "rubric_id": "dev-placeholder",
+  "version": 1,
+  "description": "DEVELOPMENT PLACEHOLDER. Weights and thresholds are NOT TalentGum's. Replace with the client rubric.",
+  "criteria": [
+    {"id": "note_accuracy", "label": "Correct notes", "weight": 0.35, "metric": "note_accuracy_pct",
+     "map": {"type": "linear", "from": [40, 98], "to": [0, 100]}},
+    {"id": "completeness", "label": "Played all the notes", "weight": 0.10, "metric": "notes_present_pct",
+     "map": {"type": "linear", "from": [50, 100], "to": [0, 100]}},
+    {"id": "extra_notes", "label": "No extra notes", "weight": 0.10, "metric": "extra_note_rate_pct",
+     "map": {"type": "linear", "from": [30, 0], "to": [0, 100]}},
+    {"id": "chords", "label": "Chords", "weight": 0.10, "metric": "chord_accuracy_pct",
+     "map": {"type": "linear", "from": [30, 100], "to": [0, 100]}},
+    {"id": "rhythm", "label": "Timing", "weight": 0.20, "metric": "onset_within_ms_pct",
+     "params": {"ms": 120}, "map": {"type": "linear", "from": [30, 95], "to": [0, 100]}},
+    {"id": "steadiness", "label": "Steady tempo", "weight": 0.10, "metric": "tempo_consistency_cv_pct",
+     "map": {"type": "linear", "from": [25, 3], "to": [0, 100]}},
+    {"id": "fluency", "label": "Playing without long pauses", "weight": 0.05, "metric": "pause_count",
+     "map": {"type": "step", "points": [[0, 100], [1, 70], [2, 40], [4, 0]]}}
+  ],
+  "score_bands": {"keep_practising": [0, 55], "good": [55, 80], "excellent": [80, 100]},
+  "options": {"allow_transposition": true, "review_confidence_threshold": 0.6,
+              "pause_threshold_s": 1.5, "timing_tolerance_ms": 120}
+}
