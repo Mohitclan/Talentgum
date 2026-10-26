@@ -7,7 +7,7 @@ import soundfile as sf
 
 from ras.core.rubric import load_rubric
 from ras.core.transcribe.ground_truth import GroundTruthTranscriber
-from ras.pipeline import assess
+from ras.pipeline import PipelineConfig, assess
 from ras.synth.performance import PerfSpec, simulate_performance
 from ras.synth.render import degrade, render_notes, write_audio
 from ras.types import PerfNote
@@ -28,7 +28,7 @@ def test_end_to_end_result_is_complete_and_json(song_dir, take):
     truth, audio = take
     start = min(n.onset for n in truth.notes) - 0.1
     res = assess(song_dir / "twinkle.musicxml", audio, RUBRIC, GroundTruthTranscriber(truth.notes),
-                 start_s=start)
+                 start_s=start, config=PipelineConfig(verify_missing=False))
     assert res.status == "completed"
     d = json.loads(json.dumps(res.model_dump(mode="json")))  # plain JSON, no numpy leaks
     assert d["summary"]["wrong_pitch"] == 2 and d["summary"]["missing"] == 2
@@ -91,3 +91,14 @@ def test_no_notes_detected_goes_to_review(song_dir, take):
     res = assess(song_dir / "twinkle.musicxml", audio, RUBRIC, GroundTruthTranscriber([]))
     assert "no_notes_detected" in res.warnings
     assert res.confidence["needs_review"]
+
+
+def test_result_claiming_most_of_the_piece_is_wrong_goes_to_a_teacher(song_dir, twinkle, tmp_path):
+    truth = simulate_performance(twinkle, PerfSpec(seed=3, n_missing=40))
+    audio = write_audio(render_notes(truth.notes), tmp_path / "bad.wav")
+    res = assess(song_dir / "twinkle.musicxml", audio, RUBRIC, GroundTruthTranscriber(truth.notes))
+    assert res.confidence["needs_review"] and "many_error_claims" in res.confidence["reasons"]
+    ok = simulate_performance(twinkle, PerfSpec(seed=3, n_missing=4))
+    audio2 = write_audio(render_notes(ok.notes), tmp_path / "ok.wav")
+    res2 = assess(song_dir / "twinkle.musicxml", audio2, RUBRIC, GroundTruthTranscriber(ok.notes))
+    assert not res2.confidence["needs_review"]

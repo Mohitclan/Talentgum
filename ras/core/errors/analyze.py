@@ -43,6 +43,8 @@ class NoteResult:
     perf_onset_s: float | None = None
     onset_dev_ms: float | None = None
     duration_ratio: float | None = None
+    expected_onset_s: float | None = None  # where the score note should have sounded
+    audio_evidence_db: float | None = None  # onset jump found in the audio for a missing note
 
 
 @dataclass
@@ -68,6 +70,20 @@ class Analysis:
     velocity_range: float | None = None
     velocity_flat: bool = True
     notes: list[str] = field(default_factory=list)
+    n_uncertain: int = 0  # reported missing, but the audio shows an onset: we cannot tell
+
+    @property
+    def n_scored(self) -> int:
+        """Score notes whose outcome is known."""
+        return self.n_ref - self.n_uncertain
+
+    def mark_uncertain(self, result_indices: list[int]) -> None:
+        for i in result_indices:
+            r = self.results[i]
+            if r.status == "missing":
+                r.status = "uncertain"
+                self.n_missing -= 1
+                self.n_uncertain += 1
 
     @property
     def coverage(self) -> float:
@@ -88,6 +104,7 @@ class Analysis:
             "wrong_pitch": self.n_wrong_pitch,
             "wrong_octave": self.n_wrong_octave,
             "missing": self.n_missing,
+            "uncertain": self.n_uncertain,
             "extra": self.n_extra,
             "chords_total": self.chords_total,
             "chords_correct": self.chords_correct,
@@ -395,7 +412,9 @@ def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
             "correct", r, p, perf_pitch=perf[p].pitch, perf_onset_s=perf[p].onset,
             onset_dev_ms=onset_dev.get(p), duration_ratio=dur_ratio.get(p)))
     for r in unmatched_ref:
-        results.append(NoteResult("missing", r))
+        results.append(NoteResult(
+            "missing", r,
+            expected_onset_s=exp_sec(float(beats[r])) if exp_sec is not None else None))
     for r, note in statuses.items():
         results.append(note)
     for p in unmatched_perf:

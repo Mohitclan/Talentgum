@@ -105,13 +105,108 @@ def benchmark(
     models: str = typer.Option("ground-truth,transkun", help="Comma-separated model names"),
     limit: Optional[int] = typer.Option(None, help="Use only the first N recordings"),
     out: Optional[Path] = typer.Option(None, help="Output directory (default data/runs/bench_<time>)"),
+    cache: Optional[Path] = typer.Option(None, help="Transcription cache directory (skips re-running models)"),
 ):
     """Compare transcribers: note F1, error-detection precision/recall, CPU time, peak RAM."""
     from ras.eval.benchmark import run_benchmark
 
-    path = run_benchmark(data, [m.strip() for m in models.split(",")], out, limit, log=console.print)
+    path = run_benchmark(data, [m.strip() for m in models.split(",")], out, limit, log=console.print,
+                         cache_dir=cache)
     console.print((path / "report.md").read_text())
     console.print(f"Full results in {path}")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8000),
+    data_dir: Path = typer.Option(Path("data/service"), help="Where the database and files live"),
+    transcriber: str = typer.Option("transkun", help="transkun | basic-pitch"),
+    with_worker: bool = typer.Option(True, help="Run a worker thread inside the server (simplest locally)"),
+):
+    """Start the API and web UI (http://HOST:PORT/ui/). Add --no-with-worker and run `ras worker` separately."""
+    import threading
+
+    import uvicorn
+
+    from ras.service.api import create_app
+    from ras.service.config import Settings
+    from ras.service.worker import Worker
+
+    settings = Settings(data_dir=data_dir, transcriber=transcriber)
+    app = create_app(settings)
+    if with_worker:
+        worker = Worker(settings, session_factory=app.state.Session, store=app.state.store)
+        threading.Thread(target=worker.run_forever, daemon=True, name="ras-worker").start()
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+@app.command()
+def worker(
+    data_dir: Path = typer.Option(Path("data/service")),
+    transcriber: str = typer.Option("transkun"),
+):
+    """Run a worker process that handles queued assessments."""
+    import logging
+
+    from ras.service.config import Settings
+    from ras.service.worker import Worker
+
+    logging.basicConfig(level=logging.INFO)
+    Worker(Settings(data_dir=data_dir, transcriber=transcriber)).run_forever()
+
+
+@app.command()
+def ingest(
+    manifest: Path = typer.Argument(..., exists=True, help="Client manifest JSON (see ras/service/ingest.py)"),
+    data_dir: Path = typer.Option(Path("data/service")),
+):
+    """Load songs, a rubric and recordings from a manifest and queue them for the worker."""
+    from ras.service.config import Settings
+    from ras.service.db import make_session_factory
+    from ras.service.ingest import ingest_manifest
+    from ras.service.storage import LocalStore
+
+    settings = Settings(data_dir=data_dir)
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    Session = make_session_factory(settings.database_url)
+    with Session() as db:
+        out = ingest_manifest(db, LocalStore(settings.data_dir / "objects"), manifest)
+    console.print(f"songs {out['songs']} (+{out['references_added']} versions), rubric {out['rubric']}, "
+                  f"{len(out['queued'])} recordings queued")
+    for e in out["errors"]:
+        console.print(f"[red]{e}[/red]")
+    console.print("Start `ras serve` (or `ras worker`) to process the queue.")
+
+
+@app.command()
+def evaluate(
+    data_dir: Path = typer.Option(Path("data/service")),
+    target_false_alarm: float = typer.Option(0.10, help="Highest acceptable share of wrong error claims"),
+    out: Optional[Path] = typer.Option(None, help="Write the full JSON report here"),
+):
+    """Compare results with teacher reviews: error precision/recall, score agreement, confidence threshold."""
+    from ras.service.config import Settings
+    from ras.service.db import make_session_factory
+    from ras.service.evaluation import evaluate as run_eval
+    from ras.service.evaluation import load_cases
+
+    Session = make_session_factory(Settings(data_dir=data_dir).database_url)
+    with Session() as db:
+        report = run_eval(load_cases(db), target_false_alarm)
+    if not report["n_reviewed"]:
+        console.print("No reviewed assessments yet. Teachers review in the web UI (Review queue).")
+        return
+    d = report["error_detection"]
+    console.print(f"{report['n_reviewed']} reviewed. Error detection vs teachers: precision "
+                  f"{d['precision']:.3f} {d['precision_ci']}, recall {d['recall']:.3f} {d['recall_ci']}")
+    if "score_agreement" in report:
+        console.print(f"Score vs teacher score: {report['score_agreement']}")
+    c = report["confidence"]
+    console.print(f"Recommended confidence threshold: {c['recommended_threshold']} "
+                  f"(target false-alarm rate {c['target_false_alarm_rate']})")
+    if out:
+        out.write_text(json.dumps(report, indent=1, default=str))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording Assessment System</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #17202b; --soft: #5a6676; --rule: #d9dee6; --accent: #1f5fa8;
+    --ok: #2f7d4a; --ok-bg: #e4f3ea; --wrong: #a35a00; --wrong-bg: #fff0d9; --miss: #b3261e; --miss-bg: #fde7e5;
+    --extra: #6b3fa0; --extra-bg: #efe7f8; --unc: #5a6676; --unc-bg: #e9ecf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11161d; --card: #1a212b; --ink: #e6ebf2; --soft: #9aa6b6; --rule: #2d3745; --accent: #7fb0ea;
+      --ok: #8fd0a4; --ok-bg: #173324; --wrong: #f0b35c; --wrong-bg: #3a2a12; --miss: #f2938c; --miss-bg: #3b1d1b;
+      --extra: #c3a3ee; --extra-bg: #2c2140; --unc: #9aa6b6; --unc-bg: #262e39; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; padding: 12px 16px; background: var(--card);
+    border-bottom: 1px solid var(--rule); }
+  header h1 { font-size: 17px; margin: 0; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: none; border: 1px solid transparent; padding: 6px 12px; border-radius: 6px; color: var(--soft); cursor: pointer; font: inherit; }
+  nav button.on { color: var(--accent); border-color: var(--accent); }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  section.card, .card { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; color: var(--soft); margin: 8px 0 2px; }
+  input, select, textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { min-height: 140px; font: 12px/1.4 ui-monospace, monospace; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+  button.primary { margin-top: 12px; padding: 8px 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; font: inherit; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0b1118; } }
+  button.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+  .muted { color: var(--soft); font-size: 13px; }
+  .err { color: var(--miss); }
+  .score { font-size: 44px; font-weight: 700; line-height: 1; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; border: 1px solid var(--rule); margin-right: 6px; }
+  .badge.review { background: var(--wrong-bg); color: var(--wrong); border-color: var(--wrong); }
+  .badge.good { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .badge.bad { background: var(--miss-bg); color: var(--miss); border-color: var(--miss); }
+  .bars { display: grid; gap: 6px; margin-top: 10px; }
+  .bar { display: grid; grid-template-columns: 150px 1fr 56px; align-items: center; gap: 8px; font-size: 13px; }
+  .bar .track { background: var(--unc-bg); border-radius: 4px; height: 10px; overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); }
+  .measure { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--rule); }
+  .measure .no { width: 52px; color: var(--soft); font-size: 12px; flex: none; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { padding: 2px 7px; border-radius: 5px; font-size: 12.5px; border: 1px solid transparent; cursor: default; white-space: nowrap; }
+  .chip.correct { background: var(--ok-bg); color: var(--ok); }
+  .chip.wrong_pitch, .chip.wrong_octave { background: var(--wrong-bg); color: var(--wrong); }
+  .chip.missing { background: var(--miss-bg); color: var(--miss); }
+  .chip.extra { background: var(--extra-bg); color: var(--extra); }
+  .chip.uncertain { background: var(--unc-bg); color: var(--unc); border-style: dashed; border-color: var(--unc); }
+  .chip.edited { outline: 2px solid var(--accent); }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+  tr.click { cursor: pointer; } tr.click:hover { background: var(--bg); }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  audio { width: 100%; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Recording Assessment System</h1>
+  <nav id="nav"></nav>
+  <span style="flex:1"></span>
+  <input id="apikey" placeholder="API key (if set)" style="width:150px" aria-label="API key">
+</header>
+<main id="main"></main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const noteName = (m) => m == null ? '?' : NAMES[m % 12] + (Math.floor(m / 12) - 1);
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+}
+const key = () => { try { return sessionStorage.getItem('ras_key') || ''; } catch { return ''; } };
+$('#apikey').value = key();
+$('#apikey').addEventListener('change', (e) => { try { sessionStorage.setItem('ras_key', e.target.value); } catch {} });
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (key()) headers['X-API-Key'] = key();
+  if (opts.json !== undefined) { headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+  const r = await fetch('/v1' + path, Object.assign({}, opts, { headers }));
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((data.code ? data.code + ': ' : '') + (data.detail || r.statusText));
+  return data;
+}
+async function upload(file, kind) {
+  const fd = new FormData(); fd.append('file', file);
+  return api('/files?kind=' + kind, { method: 'POST', body: fd });
+}
+
+// ---- shared result view --------------------------------------------------------------------
+const LEGEND = [['correct','Correct'],['wrong_pitch','Wrong note'],['missing','Missing'],['extra','Extra'],['uncertain','Not sure']];
+function legend() { return h('div', { class: 'legend' }, LEGEND.map(([c, t]) => h('span', { class: 'chip ' + c }, t))); }
+
+function scoreView(notes, editable, edits) {
+  const byMeasure = new Map(); const extras = [];
+  for (const n of notes) {
+    if (n.status === 'extra') { extras.push(n); continue; }
+    if (!byMeasure.has(n.measure)) byMeasure.set(n.measure, []);
+    byMeasure.get(n.measure).push(n);
+  }
+  const chip = (n) => {
+    const status = (edits && n.ref_index != null && edits.has(n.ref_index)) ? edits.get(n.ref_index) : n.status;
+    let label = noteName(n.ref_pitch ?? n.perf_pitch);
+    if (n.status === 'wrong_pitch' || n.status === 'wrong_octave') label += '→' + noteName(n.perf_pitch);
+    const tip = [status, n.beat_in_measure != null ? 'beat ' + n.beat_in_measure : null,
+      n.onset_dev_ms != null ? Math.round(n.onset_dev_ms) + ' ms off' : null].filter(Boolean).join(' · ');
+    const el = h('span', { class: 'chip ' + status + (editable && edits && edits.has(n.ref_index) ? ' edited' : ''), title: tip }, label);
+    if (editable && n.ref_index != null) {
+      el.style.cursor = 'pointer';
+      let current = status;
+      el.addEventListener('click', () => {
+        const order = ['correct','wrong_pitch','wrong_octave','missing','uncertain'];
+        const next = order[(order.indexOf(current) + 1) % order.length];
+        current = next;
+        if (next === n.status) edits.delete(n.ref_index); else edits.set(n.ref_index, next);
+        el.className = 'chip ' + next + (edits.has(n.ref_index) ? ' edited' : ''); el.title = next;
+      });
+    }
+    return el;
+  };
+  const wrap = h('div', {}, legend(), editable ? h('div', { class: 'muted' }, 'Click a note to change its status.') : null);
+  [...byMeasure.keys()].sort((a, b) => a - b).forEach((m) => {
+    const ns = byMeasure.get(m).sort((a, b) => a.beat_in_measure - b.beat_in_measure || a.ref_pitch - b.ref_pitch);
+    wrap.append(h('div', { class: 'measure' }, h('span', { class: 'no' }, 'Bar ' + m), h('div', { class: 'chips' }, ns.map(chip))));
+  });
+  if (extras.length) wrap.append(h('div', { class: 'measure' }, h('span', { class: 'no' }, 'Extra'),
+    h('div', { class: 'chips' }, extras.sort((a, b) => a.perf_onset_s - b.perf_onset_s).map((n) =>
+      h('span', { class: 'chip extra', title: 'at ' + n.perf_onset_s.toFixed(1) + ' s' }, noteName(n.perf_pitch) + ' @' + n.perf_onset_s.toFixed(1) + 's')))));
+  return wrap;
+}
+
+function resultView(a, notes, extra) {
+  const box = h('div');
+  if (['queued', 'processing'].includes(a.status)) { box.append(h('p', {}, 'Status: ' + a.status + ' …')); return box; }
+  if (a.status === 'rejected' || a.status === 'failed') {
+    box.append(h('p', { class: 'err' }, a.status.toUpperCase() + ': ' + (a.error_code || '') + ' ' + (a.error_detail || '')));
+    return box;
+  }
+  const band = a.scoring && a.scoring.band;
+  const conf = a.confidence_detail || {};
+  box.append(h('div', { class: 'row', style: 'align-items:end' },
+    h('div', {}, h('div', { class: 'score' }, a.total_score == null ? '–' : Math.round(a.total_score)), h('div', { class: 'muted' }, 'out of 100' + (band ? ' · ' + band.replace('_', ' ') : ''))),
+    h('div', {},
+      h('span', { class: 'badge ' + (a.needs_review || a.status === 'review_required' ? 'review' : 'good') }, a.status === 'reviewed' ? 'reviewed by a teacher' : (a.needs_review ? 'needs teacher review' : 'confident')),
+      h('span', { class: 'badge' }, 'confidence ' + (a.confidence ?? 0).toFixed(2)),
+      (conf.reasons || []).map((r) => h('span', { class: 'badge' }, r.replace(/_/g, ' '))))));
+  if (a.feedback && a.feedback.length) box.append(h('h2', { style: 'margin-top:16px' }, 'Feedback'), h('ul', {}, a.feedback.map((f) => h('li', {}, f))));
+  const crit = a.scoring && a.scoring.criteria ? Object.entries(a.scoring.criteria) : [];
+  if (crit.length) box.append(h('h2', { style: 'margin-top:16px' }, 'Scores by criterion'), h('div', { class: 'bars' }, crit.map(([id, c]) =>
+    h('div', { class: 'bar' }, h('span', {}, id.replace(/_/g, ' ')),
+      h('div', { class: 'track' }, c.score == null ? null : h('div', { class: 'fill', style: 'width:' + c.score + '%' })),
+      h('span', { class: 'muted' }, c.score == null ? 'not assessed' : Math.round(c.score))))));
+  const s = a.summary || {};
+  box.append(h('p', { class: 'muted', style: 'margin-top:12px' },
+    `${s.correct ?? 0} correct · ${s.wrong_pitch ?? 0} wrong · ${s.wrong_octave ?? 0} octave · ${s.missing ?? 0} missing · ${s.uncertain ?? 0} not sure · ${s.extra ?? 0} extra · tempo ${s.mean_bpm ? Math.round(s.mean_bpm) : '?'} bpm · ${s.pause_count ?? 0} pauses`));
+  if ((a.warnings || []).length) box.append(h('p', { class: 'muted' }, 'Notes: ' + a.warnings.join(', ')));
+  if (notes) box.append(h('h2', { style: 'margin-top:16px' }, 'Score view'), extra && extra.scoreEl ? extra.scoreEl : scoreView(notes, false));
+  if (a.recording_file_id) box.append(h('audio', { controls: true, src: '/v1/files/' + a.recording_file_id + '/content' }));
+  return box;
+}
+
+// ---- tabs ----------------------------------------------------------------------------------
+const TABS = { assess: 'Assess', review: 'Review queue', history: 'History', songs: 'Songs & rubrics' };
+let tab = 'assess';
+function show(t) { tab = t; renderNav(); ({ assess, review, history, songs })[t](); }
+function renderNav() { const n = $('#nav'); n.replaceChildren(...Object.entries(TABS).map(([k, v]) =>
+  h('button', { class: k === tab ? 'on' : '', onclick: () => show(k) }, v))); }
+const main = (...c) => $('#main').replaceChildren(...c);
+const fail = (e) => h('p', { class: 'err' }, String(e.message || e));
+
+async function openAssessment(id, editable) {
+  const a = await api('/assessments/' + id);
+  const notes = a.status === 'processing' || a.status === 'queued' || a.status === 'rejected' || a.status === 'failed' ? null : (await api('/assessments/' + id + '/notes')).notes;
+  return { a, notes };
+}
+
+async function assess() {
+  const [songs, rubrics] = await Promise.all([api('/songs'), api('/rubrics')]).catch((e) => { main(fail(e)); return [[], []]; });
+  const latest = {}; rubrics.forEach((r) => { if (!latest[r.rubric_id] || latest[r.rubric_id] < r.version) latest[r.rubric_id] = r.version; });
+  const out = h('div'); const status = h('p', { class: 'muted' });
+  const form = h('form', { class: 'card', onsubmit: async (ev) => {
+    ev.preventDefault(); out.replaceChildren(); status.textContent = 'Uploading…'; status.className = 'muted';
+    try {
+      const f = $('#rec').files[0]; if (!f) throw new Error('choose a recording');
+      const up = await upload(f, 'audio');
+      const startv = $('#start').value;
+      const r = await api('/assessments', { method: 'POST', json: { song_id: $('#song').value, rubric_id: $('#rubric').value,
+        recording_file_id: up.file_id, student_id: $('#student').value || null, start_s: startv === '' ? null : Number(startv) } });
+      status.textContent = 'Queued. Analysing (this can take a minute on CPU)…';
+      for (;;) {
+        const { a, notes } = await openAssessment(r.assessment_id);
+        if (!['queued', 'processing'].includes(a.status)) { status.textContent = ''; out.replaceChildren(h('div', { class: 'card' }, resultView(a, notes))); break; }
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+    } catch (e) { status.textContent = String(e.message || e); status.className = 'err'; }
+  } },
+    h('h2', {}, 'Assess a recording'),
+    songs.length ? null : h('p', { class: 'err' }, 'No songs yet: add one under "Songs & rubrics".'),
+    h('div', { class: 'row' },
+      h('div', {}, h('label', { for: 'song' }, 'Song'), h('select', { id: 'song' }, songs.map((s) => h('option', { value: s.song_id }, s.title + ' (' + s.song_id + ')')))),
+      h('div', {}, h('label', { for: 'rubric' }, 'Rubric'), h('select', { id: 'rubric' }, Object.keys(latest).map((k) => h('option', { value: k }, k + ' v' + latest[k])))),
+      h('div', {}, h('label', { for: 'student' }, 'Student ID'), h('input', { id: 'student', placeholder: 'optional' })),
+      h('div', {}, h('label', { for: 'start' }, 'Start time (seconds)'), h('input', { id: 'start', type: 'number', step: '0.1', min: '0', placeholder: 'optional' }))),
+    h('label', { for: 'rec' }, 'Recording (m4a, wav, mp3, flac …)'), h('input', { id: 'rec', type: 'file', accept: 'audio/*,.m4a' }),
+    h('button', { class: 'primary', type: 'submit' }, 'Assess'));
+  main(form, status, out);
+}
+
+async function history() {
+  try {
+    const rows = await api('/assessments?limit=50');
+    const detail = h('div');
+    main(h('div', { class: 'card' }, h('h2', {}, 'Recent assessments'), rows.length ? h('table', {}, h('thead', {}, h('tr', {}, ['When', 'Student', 'Song', 'Status', 'Score'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, rows.map((r) => h('tr', { class: 'click', onclick: async () => { const { a, notes } = await openAssessment(r.assessment_id); detail.replaceChildren(h('div', { class: 'card' }, resultView(a, notes))); detail.scrollIntoView(); } },
+        h('td', {}, r.created_at.replace('T', ' ').slice(0, 16)), h('td', {}, r.student_id || ''), h('td', {}, r.song_id), h('td', {}, r.status), h('td', {}, r.total_score == null ? '' : Math.round(r.total_score)))))) : h('p', { class: 'muted' }, 'Nothing yet.')), detail);
+  } catch (e) { main(fail(e)); }
+}
+
+async function review() {
+  try {
+    const rows = await api('/review-queue');
+    const detail = h('div');
+    const open = async (id) => {
+      const { a, notes } = await openAssessment(id); const edits = new Map();
+      const crit = Object.keys((a.scoring && a.scoring.criteria) || {});
+      const scores = {}; const sc = h('div', { class: 'row' }, crit.map((c) => h('div', {}, h('label', {}, c.replace(/_/g, ' ') + ' (0-100)'), h('input', { type: 'number', min: 0, max: 100, oninput: (e) => { scores[c] = e.target.value === '' ? undefined : Number(e.target.value); } }))));
+      const reviewer = h('input', { placeholder: 'your name' }); const overall = h('input', { type: 'number', min: 0, max: 100 }); const comment = h('textarea', { style: 'min-height:60px' });
+      const msg = h('p', { class: 'muted' });
+      const noteEditor = scoreView(notes, true, edits);
+      detail.replaceChildren(h('div', { class: 'card' }, resultView(a, notes, { scoreEl: noteEditor }),
+        h('h2', { style: 'margin-top:16px' }, 'Your review'),
+        h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Reviewer'), reviewer), h('div', {}, h('label', {}, 'Overall score (0-100)'), overall)),
+        h('label', {}, 'Teacher scores per criterion (optional)'), sc, h('label', {}, 'Comment'), comment,
+        h('button', { class: 'primary', onclick: async () => {
+          try {
+            if (!reviewer.value.trim()) throw new Error('enter your name');
+            const corrections = [...edits].map(([ref_index, status]) => ({ kind: 'note', ref_index, status }));
+            const teacher_scores = Object.fromEntries(Object.entries(scores).filter(([, v]) => v != null));
+            await api('/assessments/' + id + '/review', { method: 'POST', json: { reviewer: reviewer.value.trim(), corrections, teacher_scores,
+              overall_score: overall.value === '' ? null : Number(overall.value), comment: comment.value || null } });
+            msg.textContent = 'Saved. Thank you!'; msg.className = ''; setTimeout(review, 900);
+          } catch (e) { msg.textContent = String(e.message || e); msg.className = 'err'; }
+        } }, 'Save review'), msg));
+      detail.scrollIntoView();
+    };
+    main(h('div', { class: 'card' }, h('h2', {}, 'Waiting for a teacher (' + rows.length + ')'), rows.length ? h('table', {}, h('thead', {}, h('tr', {}, ['When', 'Student', 'Song', 'Confidence', 'Why'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, rows.map((r) => h('tr', { class: 'click', onclick: () => open(r.assessment_id) }, h('td', {}, r.created_at.replace('T', ' ').slice(0, 16)), h('td', {}, r.student_id || ''), h('td', {}, r.song_id),
+        h('td', {}, (r.confidence ?? 0).toFixed(2)), h('td', {}, ((r.confidence_detail || {}).reasons || []).join(', ').replace(/_/g, ' ')))))) : h('p', { class: 'muted' }, 'Nothing needs review.')), detail);
+  } catch (e) { main(fail(e)); }
+}
+
+async function songs() {
+  try {
+    const [songs, rubrics] = await Promise.all([api('/songs'), api('/rubrics')]);
+    const msg = h('p', { class: 'muted' }); const say = (t, bad) => { msg.textContent = t; msg.className = bad ? 'err' : 'muted'; };
+    const sForm = h('form', { class: 'card', onsubmit: async (ev) => { ev.preventDefault();
+      try { const f = $('#ref').files[0]; if (!f) throw new Error('choose a reference file'); const up = await upload(f, 'reference');
+        const existing = songs.find((s) => s.song_id === $('#sid').value);
+        if (existing) await api('/songs/' + existing.song_id + '/references', { method: 'POST', json: { reference_file_id: up.file_id } });
+        else await api('/songs', { method: 'POST', json: { song_id: $('#sid').value, title: $('#stitle').value || $('#sid').value, reference_file_id: up.file_id } });
+        songs_(); } catch (e) { say(String(e.message || e), true); } } },
+      h('h2', {}, 'Add a song, or a new reference version'), h('div', { class: 'row' },
+        h('div', {}, h('label', { for: 'sid' }, 'Song ID'), h('input', { id: 'sid', required: true, placeholder: 'twinkle' })),
+        h('div', {}, h('label', { for: 'stitle' }, 'Title'), h('input', { id: 'stitle' }))),
+      h('label', { for: 'ref' }, 'Reference (MusicXML, MXL or MIDI)'), h('input', { id: 'ref', type: 'file', accept: '.musicxml,.xml,.mxl,.mid,.midi' }),
+      h('p', { class: 'muted' }, 'An existing Song ID adds a new immutable version.'), h('button', { class: 'primary', type: 'submit' }, 'Save song'));
+    const rubricBox = h('textarea', { id: 'rjson', placeholder: '{"rubric_id": "...", "criteria": [...]}' });
+    const rForm = h('form', { class: 'card', onsubmit: async (ev) => { ev.preventDefault();
+      try { await api('/rubrics', { method: 'POST', json: JSON.parse(rubricBox.value) }); songs_(); } catch (e) { say(String(e.message || e), true); } } },
+      h('h2', {}, 'Add a rubric (JSON)'), rubricBox, h('p', { class: 'muted' }, 'Weights must add up to 1. Saving an existing rubric ID creates the next version.'),
+      h('button', { class: 'primary', type: 'submit' }, 'Save rubric'));
+    main(msg, h('div', { class: 'card' }, h('h2', {}, 'Songs'), songs.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Song', 'Versions', 'Notes', 'Bars', 'Tempo'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, songs.map((s) => { const r = s.references[s.references.length - 1]; return h('tr', {}, h('td', {}, s.title + ' (' + s.song_id + ')'), h('td', {}, s.references.length), h('td', {}, r.notes), h('td', {}, r.measures), h('td', {}, Math.round(r.bpm) + ' bpm')); }))) : h('p', { class: 'muted' }, 'No songs yet.')),
+      sForm, h('div', { class: 'card' }, h('h2', {}, 'Rubrics'), rubrics.length ? h('ul', {}, rubrics.map((r) => h('li', {}, r.rubric_id + ' v' + r.version + ': ' + r.criteria.join(', ')))) : h('p', { class: 'muted' }, 'No rubrics yet.')), rForm);
+  } catch (e) { main(fail(e)); }
+}
+const songs_ = songs;
+renderNav(); show('assess');
+</script>
+</body>
+</html>

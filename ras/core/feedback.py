@@ -22,14 +22,15 @@ def _where(r: NoteResult) -> str:
 def make_feedback(analysis: Analysis, ref: Reference, timing_tolerance_ms: float = 120.0,
                   max_items: int = 4) -> list[str]:
     msgs: list[str] = []
-    n = max(analysis.n_ref, 1)
+    n = max(analysis.n_scored, 1)
     right = analysis.n_correct
-    if right == analysis.n_ref and not analysis.n_extra:
+    if right == analysis.n_scored and not analysis.n_extra:
         msgs.append("Wonderful! Every note was right.")
     elif right / n >= 0.7:
-        msgs.append(f"Great job! You played {right} of {analysis.n_ref} notes correctly.")
+        msgs.append(f"Great job! You played {right} of {analysis.n_scored} notes correctly.")
     elif right / n >= 0.4:
-        msgs.append(f"Good effort! {right} of {analysis.n_ref} notes were right, and every practice makes it stronger.")
+        msgs.append(f"Good effort! {right} of {analysis.n_scored} notes were right, "
+                    "and every practice makes it stronger.")
     else:
         msgs.append("Nice try! Keep practising this piece slowly, one small part at a time.")
 

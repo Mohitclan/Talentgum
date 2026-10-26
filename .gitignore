@@ -17,3 +17,6 @@ data/runs/
 .env
 .DS_Store
 data/synth/
+data/demo/
+data/service/
+.claude/

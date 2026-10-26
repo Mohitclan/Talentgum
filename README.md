@@ -3,8 +3,8 @@
 Score-aware assessment of keyboard performances: a student recording is compared with the reference
 score and turned into note-level results, a rubric score, confidence and encouraging feedback.
 
-> **Status: Phase 1 (core engine, local CLI).** Runs fully on a laptop, no cloud, no GPU.
-> Phase 2 adds the API, worker and review UI. Phase 3 is AWS/GPU readiness. See [docs/PHASES.md](docs/PHASES.md).
+> **Status: Phases 1 and 2 built (core engine, then local API, worker and review UI).** Runs fully on a
+> laptop, no cloud, no GPU. Phase 3 is AWS/GPU readiness, on hold. See [docs/PHASES.md](docs/PHASES.md).
 
 ## How it works
 
@@ -33,7 +33,7 @@ Python 3.12 is required (PyTorch/Transkun do not support 3.13+ yet). FFmpeg must
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -e ".[dev,transkun]"
+.venv/bin/pip install -e ".[dev,transkun,service]"
 ```
 
 On an Intel Mac, `librosa` needs an older `llvmlite`; if the install fails building it, run
@@ -64,6 +64,25 @@ Python 3.12 (and TensorFlow is not needed): install it without dependencies and 
 `ground-truth` feeds the known notes into the pipeline: it measures the alignment and
 error-detection stages alone, with perfect transcription.
 
+## Run the service (Phase 2)
+
+```bash
+.venv/bin/ras serve --data-dir data/service      # API + web UI + a worker thread: http://127.0.0.1:8000/ui/
+.venv/bin/ras ingest client/manifest.json         # bulk-load songs, rubric and recordings, queued for the worker
+.venv/bin/ras evaluate                            # results vs teacher reviews + a recommended confidence threshold
+```
+
+* Web UI: add songs (MusicXML/MIDI) and a rubric, upload a recording, see the score, feedback and a
+  per-bar view coloured by error; teachers fix notes and give scores in the **Review queue**.
+* API under `/v1` (OpenAPI at `/docs`): files, songs and reference versions, rubric versions,
+  assessments (202 + `Idempotency-Key`), notes, reviews, review queue, signed webhooks, RFC 9457 errors.
+* Jobs run on a DB-backed queue with retries (3 attempts, then `failed`), stuck-job recovery and
+  idempotent submission. Set `RAS_API_KEY` to require an `X-API-Key` header.
+* Local stand-ins sit behind small interfaces: filesystem for S3, SQLite for RDS (set `RAS_DB_URL` for
+  PostgreSQL), DB queue for SQS.
+* Results that claim most of the piece is wrong, or have low confidence, go to the review queue instead
+  of being final. Teacher corrections are stored and are the ground truth `ras evaluate` uses.
+
 ## Tests
 
 ```bash
@@ -83,6 +102,7 @@ ras/core/rubric      rubric model and scoring engine
 ras/core/confidence  confidence and "needs review"
 ras/core/feedback    template feedback
 ras/pipeline.py      end-to-end assess()
+ras/service          API (FastAPI), worker, queue, DB models, storage, ingest, evaluation, web UI
 ras/synth            songs, MusicXML writer, performance simulator, audio renderer, dataset
 ras/eval             metrics, grouped splits, benchmark harness
 ras/tools/cli.py     `ras` command
@@ -106,6 +126,11 @@ Full report and interpretation: [docs/benchmarks/phase1_synthetic.md](docs/bench
   starts when the client data and teacher-corrected annotations arrive (Phase 2 tooling).
 * The bundled rubric is a **development placeholder**; weights and thresholds are not the client's.
 * **Confidence is a heuristic**, to be calibrated on teacher-reviewed recordings.
+* **Synthetic audio is a brittle test of Transkun.** Small changes to the synth moved Transkun's
+  error-detection precision between 0.70 and 0.34 (see
+  [docs/benchmarks/phase1_closeout.md](docs/benchmarks/phase1_closeout.md)). Real recordings are needed.
+* The audio onset check for "missing" notes exists but is **off by default**: on synthetic audio it did not
+  separate dropped notes from truly absent ones. Evaluate it on real recordings before enabling.
 * **Restarts and skipped bars** are not modelled; they surface as missing/extra notes.
   A pause is detected, restarts are not.
 * hFT-Transformer is not benchmarked (research code, needs a wrapper).

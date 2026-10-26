@@ -110,7 +110,7 @@ def report_markdown(aggs: list[dict], unavailable: list[dict], data_dir: Path, n
 
 
 def run_benchmark(data_dir: str | Path, models: list[str], out_dir: str | Path | None = None,
-                  limit: int | None = None, log=print) -> Path:
+                  limit: int | None = None, log=print, cache_dir: str | Path | None = None) -> Path:
     data_dir = Path(data_dir)
     out = Path(out_dir) if out_dir else Path("data/runs") / time.strftime("bench_%Y%m%d_%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
@@ -122,8 +122,9 @@ def run_benchmark(data_dir: str | Path, models: list[str], out_dir: str | Path |
             continue
         log(f"[bench] {m} on {n} recordings ...")
         raw = out / f"{m}.raw.json"
-        cmd = [sys.executable, "-m", "ras.eval.worker", "--model", m, "--data", str(data_dir),
-               "--out", str(raw)] + (["--limit", str(limit)] if limit else [])
+        cmd = [sys.executable, "-m", "ras.eval.worker", "--model", m, "--data", str(data_dir), "--out", str(raw)]
+        cmd += ["--limit", str(limit)] if limit else []
+        cmd += ["--cache", str(cache_dir)] if cache_dir else []
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0 or not raw.exists():
             unavailable.append({"model": m, "reason": "worker crashed: " + proc.stderr.strip()[-300:]})

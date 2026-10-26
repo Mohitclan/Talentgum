@@ -27,6 +27,7 @@ from ras.core.feedback import make_feedback
 from ras.core.rubric import Rubric, score_analysis
 from ras.core.score.reference import Reference, load_reference
 from ras.core.transcribe.base import Transcriber
+from ras.core.verify import OnsetEvidence, mark_uncertain_missing
 from ras.types import PerfNote
 
 ANALYSIS_VERSION = "analysis-1"
@@ -75,6 +76,10 @@ class PipelineConfig:
     start_margin_s: float = 1.0
     start_check_window_s: float = 2.0
     unfold_repeats: bool = True
+    # Double-check 'missing' notes against the audio. OFF by default: on synthetic audio the evidence
+    # did not separate dropped notes from truly absent ones; evaluate on real recordings first.
+    verify_missing: bool = False
+    verify_threshold_db: float = 2.5  # onset jump in excess of the neighbouring semitones
     quality: QualityLimits = field(default_factory=QualityLimits)
 
 
@@ -175,6 +180,14 @@ def assess(
         pause_threshold_s=rubric.options.pause_threshold_s))
     res.warnings += analysis.notes
     mark("align_and_analyse", t0)
+
+    t0 = time.perf_counter()
+    if cfg.verify_missing and analysis.n_missing:
+        n_unc = mark_uncertain_missing(
+            analysis, OnsetEvidence(audio, cfg.sr, offset), cfg.verify_threshold_db, performed=perf)
+        if n_unc:
+            res.warnings.append(f"{n_unc}_missing_notes_have_audio_evidence_marked_uncertain")
+    mark("verify_missing", t0)
 
     # 5. scoring, confidence, feedback
     t0 = time.perf_counter()

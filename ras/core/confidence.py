@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 
 from ras.core.errors.analyze import Analysis
 
+MANY_CLAIMS_RATE = 0.40  # share of score notes reported wrong or missing that forces a teacher review
+
 
 @dataclass
 class Confidence:
@@ -44,6 +46,18 @@ def estimate_confidence(
         conf *= 0.5 + analysis.coverage
         reasons.append("low_score_coverage")
 
+    # POLICY, not a tuned number: telling a child most of the piece was wrong is the claim most
+    # damaging when it is mistaken, so a teacher confirms it first.
+    claim_rate = (analysis.n_missing + analysis.n_wrong_pitch + analysis.n_wrong_octave) / max(analysis.n_ref, 1)
+    many_claims = claim_rate > MANY_CLAIMS_RATE
+    if many_claims:
+        reasons.append("many_error_claims")
+
+    unc = getattr(analysis, "n_uncertain", 0) / max(analysis.n_ref, 1)
+    if unc > 0.05:
+        conf *= 1.0 - min(0.6, unc * 2.0)
+        reasons.append("notes_uncertain")
+
     if analysis.n_matched_for_timing() < 8:
         conf *= 0.8
         reasons.append("few_matched_notes")
@@ -53,5 +67,5 @@ def estimate_confidence(
     if transposed_not_allowed:
         reasons.append("performance_transposed")
     conf = max(0.0, min(1.0, conf))
-    review = conf < threshold or transposed_not_allowed
+    review = conf < threshold or transposed_not_allowed or many_claims
     return Confidence(round(conf, 3), review, reasons)

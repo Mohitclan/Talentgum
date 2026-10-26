@@ -37,7 +37,9 @@ class _Recording:
     def transcribe(self, audio, sr):
         t0 = time.perf_counter()
         self.last = self.inner.transcribe(audio, sr)
-        self.wall_s = time.perf_counter() - t0
+        wall = time.perf_counter() - t0
+        # on a cache hit report the originally measured model time, not the file read
+        self.wall_s = self.last.elapsed_s if self.last.elapsed_s > 0 else wall
         return self.last
 
 
@@ -46,12 +48,17 @@ def _peak_rss_gb() -> float:
     return peak / (1024**3 if platform.system() == "Darwin" else 1024**2)
 
 
-def run(model: str, data_dir: Path, rubric_path: Path, limit: int | None) -> dict:
+def run(model: str, data_dir: Path, rubric_path: Path, limit: int | None,
+        cache_dir: Path | None = None) -> dict:
     manifest = json.loads((data_dir / "manifest.json").read_text())["recordings"][:limit]
     try:
         inner = get_transcriber(model)
     except (TranscriberUnavailable, ImportError) as exc:
         return {"model": model, "available": False, "reason": str(exc)}
+    if cache_dir and not isinstance(inner, GroundTruthTranscriber):
+        from ras.core.transcribe.cache import CachedTranscriber
+
+        inner = CachedTranscriber(inner, cache_dir)
     rubric = load_rubric(rubric_path)
     cfg = PipelineConfig()
     out = {"model": model, "available": True, "records": [], "failures": []}
@@ -93,8 +100,9 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--rubric", type=Path, default=DEFAULT_RUBRIC)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--cache", type=Path, default=None, help="transcription cache directory")
     args = ap.parse_args()
-    result = run(args.model, args.data, args.rubric, args.limit)
+    result = run(args.model, args.data, args.rubric, args.limit, args.cache)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result))
 

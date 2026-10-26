@@ -103,9 +103,9 @@ def _pct(num: float, den: float) -> float | None:
 
 
 METRICS: dict[str, Callable[[Analysis, dict], float | None]] = {
-    "note_accuracy_pct": lambda a, p: _pct(a.n_correct, a.n_ref),
-    "notes_present_pct": lambda a, p: _pct(a.n_correct + a.n_wrong_pitch + a.n_wrong_octave, a.n_ref),
-    "extra_note_rate_pct": lambda a, p: _pct(a.n_extra, a.n_ref),
+    "note_accuracy_pct": lambda a, p: _pct(a.n_correct, a.n_scored),
+    "notes_present_pct": lambda a, p: _pct(a.n_correct + a.n_wrong_pitch + a.n_wrong_octave, a.n_scored),
+    "extra_note_rate_pct": lambda a, p: _pct(a.n_extra, a.n_scored),
     "chord_accuracy_pct": lambda a, p: _pct(a.chords_correct, a.chords_total),
     "onset_within_ms_pct": lambda a, p: (
         None if not len(a.onset_dev_ms)
