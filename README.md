@@ -32,20 +32,13 @@ recording (m4a, wav…) ─► FFmpeg decode ─► quality gate ─► crop at 
 Python 3.12 is required (PyTorch/Transkun do not support 3.13+ yet). FFmpeg must be on the PATH.
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -e ".[dev,transkun,service]"
+scripts/setup.sh
 ```
 
-On an Intel Mac, `librosa` needs an older `llvmlite`; if the install fails building it, run
-`pip install --only-binary=llvmlite "llvmlite<0.45" "numba<0.62"` first.
-
-Optional, for the Basic Pitch baseline. Its normal install pins old numpy/TensorFlow that do not build on
-Python 3.12 (and TensorFlow is not needed): install it without dependencies and use its bundled ONNX model.
-
-```bash
-.venv/bin/pip install --no-deps basic-pitch
-.venv/bin/pip install --only-binary=:all: "numpy<2" onnxruntime resampy
-```
+The script creates `.venv`, installs everything (`.[dev,transkun,service]` plus the optional Basic Pitch
+baseline through its bundled ONNX model) and runs the tests. It handles three macOS quirks: a Homebrew
+Python whose `venv` cannot install pip, the missing Intel-Mac wheel for the newest `llvmlite`, and
+Basic Pitch's old numpy/TensorFlow pins that do not build on Python 3.12.
 
 ## Use
 
@@ -77,7 +70,17 @@ error-detection stages alone, with perfect transcription.
 * API under `/v1` (OpenAPI at `/docs`): files, songs and reference versions, rubric versions,
   assessments (202 + `Idempotency-Key`), notes, reviews, review queue, signed webhooks, RFC 9457 errors.
 * Jobs run on a DB-backed queue with retries (3 attempts, then `failed`), stuck-job recovery and
-  idempotent submission. Set `RAS_API_KEY` to require an `X-API-Key` header.
+  idempotent submission.
+* **Tenants:** each client organisation is a tenant with its own API keys (`X-API-Key`, stored only as
+  hashes). Songs, rubrics, recordings, results, reviews, audit entries and storage prefixes are isolated
+  per tenant. With no keys created the API runs open as the `local` tenant, which is convenient for
+  development: `ras tenant-create talentgum` prints the first key and switches the server to keys.
+  Rotate with `ras key-create` / `ras key-revoke`.
+* **Rubric test:** `POST /v1/rubrics/test` (and a button in the UI) re-scores past results with a candidate
+  rubric and shows the change before it is saved. Results keep their scoring inputs for this.
+* **Privacy:** `DELETE /v1/students/{id}` erases a student's recordings, results and reviews;
+  `ras purge-audio --older-than-days N` enforces audio retention (results are kept); every recording read,
+  review and erasure is in `GET /v1/audit`.
 * Local stand-ins sit behind small interfaces: filesystem for S3, SQLite for RDS (set `RAS_DB_URL` for
   PostgreSQL), DB queue for SQS.
 * Results that claim most of the piece is wrong, or have low confidence, go to the review queue instead
@@ -97,7 +100,7 @@ ras/core/audio       decode, quality gate, level, crop
 ras/core/score       MusicXML/MIDI reference loader
 ras/core/transcribe  Transcriber interface + Transkun / Basic Pitch / ground-truth adapters
 ras/core/align       transposition detection, group-level DP matcher (and Parangonar)
-ras/core/errors      note assignment, error classes, timing, tempo, pauses, chords
+ras/core/errors      note assignment, error classes, timing, tempo, pauses, restarts, chords
 ras/core/rubric      rubric model and scoring engine
 ras/core/confidence  confidence and "needs review"
 ras/core/feedback    template feedback
@@ -119,7 +122,7 @@ data/rubrics         rubric JSON (dev placeholder only)
 
 Full report and interpretation: [docs/benchmarks/phase1_synthetic.md](docs/benchmarks/phase1_synthetic.md).
 
-## Honest limits of Phase 1
+## Honest limits
 
 * **All accuracy numbers are on synthetic audio** (a simple additive piano synth). They test the
   pipeline; they say nothing about TalentGum's keyboards, phones or rooms. The real measurement
@@ -131,8 +134,9 @@ Full report and interpretation: [docs/benchmarks/phase1_synthetic.md](docs/bench
   [docs/benchmarks/phase1_closeout.md](docs/benchmarks/phase1_closeout.md)). Real recordings are needed.
 * The audio onset check for "missing" notes exists but is **off by default**: on synthetic audio it did not
   separate dropped notes from truly absent ones. Evaluate it on real recordings before enabling.
-* **Restarts and skipped bars** are not modelled; they surface as missing/extra notes.
-  A pause is detected, restarts are not.
+* **Restarts** are detected (an abandoned attempt the student plays again is labelled `replayed`, not
+  extra; 17 of 20 simulated restarts found, 98.6% of notes still judged correctly). Very short abandoned
+  fragments (about 5 notes) can be missed. Skipped bars show as missing notes.
 * hFT-Transformer is not benchmarked (research code, needs a wrapper).
 * Transkun runs at roughly real time or slower on this Intel laptop CPU; see the benchmark report
   for measured numbers before choosing a latency target.

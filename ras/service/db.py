@@ -1,12 +1,20 @@
-"""Database models (SQLAlchemy 2.0). SQLite locally; the same models run on PostgreSQL."""
+"""Database models (SQLAlchemy 2.0). SQLite locally; the same models run on PostgreSQL.
+
+Every client organisation is a tenant. Every row that holds client data carries `tenant_id`, and the
+service layer filters every query by it, so one tenant can never read another's songs, recordings,
+results or reviews.
+"""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+
+DEFAULT_TENANT = "local"
+SCHEMA_VERSION = 2
 
 
 def now() -> dt.datetime:
@@ -17,20 +25,45 @@ class Base(DeclarativeBase):
     pass
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[dt.datetime] = mapped_column(default=now)
+
+
+class ApiKey(Base):
+    """Only a SHA-256 hash of the key is stored; the key itself is shown once, at creation."""
+
+    __tablename__ = "api_keys"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    prefix: Mapped[str] = mapped_column(String(12))  # first characters, to recognise a key in logs
+    label: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(default=now)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+
+
 class FileRow(Base):
     __tablename__ = "files"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     filename: Mapped[str] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(16))  # audio | reference
     size: Mapped[int] = mapped_column(Integer)
-    key: Mapped[str] = mapped_column(String(255))  # object-store key
+    key: Mapped[str] = mapped_column(String(255))  # object-store key, always under the tenant's prefix
     created_at: Mapped[dt.datetime] = mapped_column(default=now)
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)  # bytes removed (retention/erasure)
 
 
 class Song(Base):
     __tablename__ = "songs"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    __table_args__ = (UniqueConstraint("tenant_id", "song_id"),)
+    pk: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    song_id: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[dt.datetime] = mapped_column(default=now)
 
@@ -39,9 +72,10 @@ class Reference(Base):
     """Immutable: a change is a new version."""
 
     __tablename__ = "references"
-    __table_args__ = (UniqueConstraint("song_id", "version"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "song_id", "version"),)
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    song_id: Mapped[str] = mapped_column(ForeignKey("songs.id"))
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    song_id: Mapped[str] = mapped_column(String(64))
     version: Mapped[int] = mapped_column(Integer)
     file_id: Mapped[str] = mapped_column(ForeignKey("files.id"))
     sha256: Mapped[str] = mapped_column(String(64))
@@ -56,8 +90,9 @@ class RubricRow(Base):
     """Immutable: a change is a new version."""
 
     __tablename__ = "rubrics"
-    __table_args__ = (UniqueConstraint("rubric_id", "version"),)
+    __table_args__ = (UniqueConstraint("tenant_id", "rubric_id", "version"),)
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     rubric_id: Mapped[str] = mapped_column(String(64), index=True)
     version: Mapped[int] = mapped_column(Integer)
     body: Mapped[dict] = mapped_column(JSON)
@@ -66,8 +101,10 @@ class RubricRow(Base):
 
 class Assessment(Base):
     __tablename__ = "assessments"
+    __table_args__ = (UniqueConstraint("tenant_id", "idempotency_key"),)
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    song_id: Mapped[str] = mapped_column(ForeignKey("songs.id"), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    song_id: Mapped[str] = mapped_column(String(64), index=True)
     reference_version: Mapped[int] = mapped_column(Integer)
     rubric_id: Mapped[str] = mapped_column(String(64))
     rubric_version: Mapped[int] = mapped_column(Integer)
@@ -85,7 +122,7 @@ class Assessment(Base):
     total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
-    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     locked_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(default=now, index=True)
@@ -97,6 +134,7 @@ class Review(Base):
 
     __tablename__ = "reviews"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
     assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id"), index=True)
     reviewer: Mapped[str] = mapped_column(String(64))
     corrections: Mapped[list] = mapped_column(JSON, default=list)
@@ -104,6 +142,23 @@ class Review(Base):
     overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(default=now)
+
+
+class AuditLog(Base):
+    """Who touched recordings and personal data, and when."""
+
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    actor: Mapped[str] = mapped_column(String(64))  # API key prefix, "local" or "system"
+    action: Mapped[str] = mapped_column(String(64))
+    resource: Mapped[str] = mapped_column(String(128))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    at: Mapped[dt.datetime] = mapped_column(default=now, index=True)
+
+
+class SchemaError(RuntimeError):
+    pass
 
 
 def make_session_factory(url: str):
@@ -115,8 +170,17 @@ def make_session_factory(url: str):
     if url.startswith("sqlite"):
         kwargs = {"connect_args": {"check_same_thread": False, "timeout": 30}}
     engine = create_engine(url, **kwargs)
+    insp = inspect(engine)
+    if insp.has_table("assessments") and "tenant_id" not in {c["name"] for c in insp.get_columns("assessments")}:
+        raise SchemaError(f"the database at {url} uses an older schema (before tenants). It holds only local "
+                          "development data: move it aside and start again, or migrate it.")
     Base.metadata.create_all(engine)
-    return sessionmaker(engine, expire_on_commit=False)
+    Session = sessionmaker(engine, expire_on_commit=False)
+    with Session() as db:
+        if db.get(Tenant, DEFAULT_TENANT) is None:
+            db.add(Tenant(id=DEFAULT_TENANT, name="Local development"))
+            db.commit()
+    return Session
 
 
 def dumps(obj) -> str:

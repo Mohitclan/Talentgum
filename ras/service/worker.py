@@ -91,10 +91,17 @@ class Worker:
                 time.sleep(poll_s)
 
     def _process(self, db, a: Assessment) -> None:
-        ref_row = db.query(Reference).filter_by(song_id=a.song_id, version=a.reference_version).one()
+        ref_row = db.query(Reference).filter_by(tenant_id=a.tenant_id, song_id=a.song_id,
+                                                version=a.reference_version).one()
         ref_file = db.get(FileRow, ref_row.file_id)
         rec_file = db.get(FileRow, a.recording_file_id)
-        rub = db.query(RubricRow).filter_by(rubric_id=a.rubric_id, version=a.rubric_version).one()
+        if rec_file is None or rec_file.deleted_at is not None:
+            a.status, a.error_code, a.finished_at = "failed", "recording_deleted", now()
+            a.error_detail = "the recording was deleted before it could be assessed"
+            db.commit()
+            return
+        rub = db.query(RubricRow).filter_by(tenant_id=a.tenant_id, rubric_id=a.rubric_id,
+                                            version=a.rubric_version).one()
         rubric = Rubric.model_validate(rub.body)
         reference = load_reference(self.store.get_path(ref_file.key))
         result = assess(reference, self.store.get_path(rec_file.key), rubric, self.transcriber,

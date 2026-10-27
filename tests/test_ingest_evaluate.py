@@ -51,12 +51,12 @@ def _reviewed_case(twinkle, tmp_path, name, *, spec, reject=0):
     truth = simulate_performance(twinkle, spec)
     with S() as db:
         ref = write_musicxml(SONGS["twinkle"], tmp_path / name / "t.musicxml")
-        rf = svc.save_file(db, store, "t.musicxml", Path(ref).read_bytes(), "reference")
-        svc.create_song(db, store, "twinkle", "Twinkle", rf.id)
-        svc.create_rubric(db, json.loads(RUBRIC_PATH.read_text()))
+        rf = svc.save_file(db, store, "local", "t.musicxml", Path(ref).read_bytes(), "reference")
+        svc.create_song(db, store, "local", "twinkle", "Twinkle", rf.id)
+        svc.create_rubric(db, "local", json.loads(RUBRIC_PATH.read_text()))
         audio = write_audio(render_notes(truth.notes), tmp_path / name / "a.m4a")
-        af = svc.save_file(db, store, "a.m4a", audio.read_bytes(), "audio")
-        a, _ = svc.create_assessment(db, {"song_id": "twinkle", "recording_file_id": af.id,
+        af = svc.save_file(db, store, "local", "a.m4a", audio.read_bytes(), "audio")
+        a, _ = svc.create_assessment(db, "local", {"song_id": "twinkle", "recording_file_id": af.id,
                                           "rubric_id": "dev-placeholder", "student_id": name})
         asm = a.id
     tr.set_notes(truth.notes)
@@ -68,7 +68,7 @@ def _reviewed_case(twinkle, tmp_path, name, *, spec, reject=0):
         # the teacher overturns `reject` of the system's wrong-pitch claims
         for n in [n for n in notes if n["status"] == "wrong_pitch"][:reject]:
             corrections.append({"kind": "note", "ref_index": n["ref_index"], "status": "correct"})
-        svc.record_review(db, asm, "t", corrections, {}, a.total_score, None)
+        svc.record_review(db, "local", asm, "t", corrections, {}, a.total_score, None)
         return load_cases(db)[0]
 
 

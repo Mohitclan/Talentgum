@@ -1,7 +1,12 @@
-"""REST API under /v1. The web UI uses only this API."""
+"""REST API under /v1. The web UI uses only this API.
+
+Authentication: each tenant has its own API keys (`X-API-Key`). While no key exists and no shared key
+is configured, the API runs open as the default "local" tenant, which keeps local development simple.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
@@ -11,7 +16,7 @@ from sqlalchemy import select
 
 from . import services as svc
 from .config import Settings
-from .db import Assessment, Review, RubricRow, Song, make_session_factory
+from .db import DEFAULT_TENANT, Song, make_session_factory
 from .storage import LocalStore
 
 UI_DIR = Path(__file__).parent / "ui"
@@ -49,6 +54,18 @@ class ReviewIn(BaseModel):
     comment: str | None = None
 
 
+class RubricTestIn(BaseModel):
+    rubric: dict
+    song_id: str | None = None
+    limit: int = Field(200, ge=1, le=2000)
+
+
+@dataclass
+class Caller:
+    tenant: str
+    actor: str
+
+
 def problem(status: int, code: str, detail: str) -> JSONResponse:
     """RFC 9457 problem details with a stable machine-readable code."""
     return JSONResponse({"type": f"https://ras.local/errors/{code}", "title": code.replace("_", " "),
@@ -61,18 +78,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     Session = make_session_factory(settings.database_url)
     store = LocalStore(settings.data_dir / "objects")
-    app = FastAPI(title="Recording Assessment System", version="0.2.0")
+    app = FastAPI(title="Recording Assessment System", version="0.3.0")
     app.state.settings, app.state.Session, app.state.store = settings, Session, store
 
     def db_session():
         with Session() as db:
             yield db
 
-    def auth(x_api_key: str | None = Header(None)):
-        if settings.api_key and x_api_key != settings.api_key:
-            raise HTTPException(401, "missing or wrong X-API-Key")
-
-    guard = [Depends(auth)]
+    def caller(x_api_key: str | None = Header(None), db=Depends(db_session)) -> Caller:
+        if settings.api_key:  # one shared key for the default tenant (simple single-client setups)
+            if x_api_key == settings.api_key:
+                return Caller(DEFAULT_TENANT, "shared-key")
+            if x_api_key is None or svc.resolve_api_key(db, x_api_key) is None:
+                raise HTTPException(401, "missing or wrong X-API-Key")
+        if x_api_key is not None:
+            found = svc.resolve_api_key(db, x_api_key)
+            if found is None:
+                raise HTTPException(401, "unknown or revoked X-API-Key")
+            return Caller(found[0], found[1])
+        if svc.any_api_keys(db):
+            raise HTTPException(401, "this server requires an X-API-Key")
+        return Caller(DEFAULT_TENANT, "local")
 
     @app.exception_handler(svc.ServiceError)
     async def _service_error(_: Request, exc: svc.ServiceError):
@@ -80,7 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, exc: HTTPException):
-        return problem(exc.status_code, "http_error", str(exc.detail))
+        return problem(exc.status_code, "unauthorized" if exc.status_code == 401 else "http_error", str(exc.detail))
 
     @app.exception_handler(Exception)
     async def _unexpected(_: Request, exc: Exception):  # never leak internals
@@ -89,8 +115,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- health and UI
     @app.get("/v1/health")
     def health(db=Depends(db_session)):
-        db.execute(select(Song.id).limit(1))
-        return {"status": "ok", "transcriber": settings.transcriber}
+        db.execute(select(Song.pk).limit(1))
+        return {"status": "ok", "transcriber": settings.transcriber, "auth": "keys" if (
+            settings.api_key or svc.any_api_keys(db)) else "open"}
 
     @app.get("/", include_in_schema=False)
     def root():
@@ -100,109 +127,120 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ui():
         return FileResponse(UI_DIR / "index.html")
 
+    @app.get("/v1/me")
+    def me(c: Caller = Depends(caller)):
+        return {"tenant": c.tenant, "actor": c.actor}
+
     # ---- files
-    @app.post("/v1/files", status_code=201, dependencies=guard)
+    @app.post("/v1/files", status_code=201)
     async def upload(file: UploadFile = File(...), kind: str = Query(..., pattern="^(audio|reference)$"),
-                     db=Depends(db_session)):
+                     c: Caller = Depends(caller), db=Depends(db_session)):
         data = await file.read()
-        row = svc.save_file(db, store, file.filename or "upload", data, kind, settings.max_upload_mb)
+        row = svc.save_file(db, store, c.tenant, file.filename or "upload", data, kind, settings.max_upload_mb)
         return {"file_id": row.id, "sha256": row.sha256, "size": row.size, "filename": row.filename, "kind": row.kind}
 
-    @app.get("/v1/files/{file_id}/content", dependencies=guard)
-    def file_content(file_id: str, db=Depends(db_session)):
-        row = svc.get_file(db, file_id)
+    @app.get("/v1/files/{file_id}/content")
+    def file_content(file_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
+        row = svc.get_file(db, c.tenant, file_id)
+        if row.kind == "audio":  # every access to a recording is audited
+            svc.audit(db, c.tenant, c.actor, "recording.read", file_id)
         return FileResponse(store.get_path(row.key), filename=row.filename)
 
     # ---- songs
-    def song_view(db, song: Song):
-        refs = db.execute(select(svc.Reference).where(svc.Reference.song_id == song.id)
-                          .order_by(svc.Reference.version)).scalars().all()
-        return {"song_id": song.id, "title": song.title, "references": [
+    def song_view(db, tenant: str, song):
+        refs = svc.references_of(db, tenant, song.song_id)
+        return {"song_id": song.song_id, "title": song.title, "references": [
             {"version": r.version, "sha256": r.sha256[:16], "notes": r.n_notes, "measures": r.n_measures,
              "bpm": r.bpm, "warnings": r.warnings} for r in refs]}
 
-    @app.post("/v1/songs", status_code=201, dependencies=guard)
-    def create_song(body: SongIn, db=Depends(db_session)):
-        song, _ = svc.create_song(db, store, body.song_id, body.title, body.reference_file_id, body.bpm)
-        return song_view(db, song)
+    @app.post("/v1/songs", status_code=201)
+    def create_song(body: SongIn, c: Caller = Depends(caller), db=Depends(db_session)):
+        song, _ = svc.create_song(db, store, c.tenant, body.song_id, body.title, body.reference_file_id, body.bpm)
+        return song_view(db, c.tenant, song)
 
-    @app.get("/v1/songs", dependencies=guard)
-    def list_songs(db=Depends(db_session)):
-        return [song_view(db, s) for s in db.execute(select(Song).order_by(Song.id)).scalars()]
+    @app.get("/v1/songs")
+    def list_songs(c: Caller = Depends(caller), db=Depends(db_session)):
+        return [song_view(db, c.tenant, s) for s in svc.list_songs(db, c.tenant)]
 
-    @app.get("/v1/songs/{song_id}", dependencies=guard)
-    def get_song(song_id: str, db=Depends(db_session)):
-        song = db.get(Song, song_id)
-        if song is None:
-            raise svc.ServiceError("song_not_found", f"no song {song_id}", 404)
-        return song_view(db, song)
+    @app.get("/v1/songs/{song_id}")
+    def get_song(song_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
+        return song_view(db, c.tenant, svc.get_song(db, c.tenant, song_id))
 
-    @app.post("/v1/songs/{song_id}/references", status_code=201, dependencies=guard)
-    def add_reference(song_id: str, body: ReferenceIn, db=Depends(db_session)):
-        svc.add_reference(db, store, song_id, body.reference_file_id, body.bpm)
-        return song_view(db, db.get(Song, song_id))
+    @app.post("/v1/songs/{song_id}/references", status_code=201)
+    def add_reference(song_id: str, body: ReferenceIn, c: Caller = Depends(caller), db=Depends(db_session)):
+        svc.add_reference(db, store, c.tenant, song_id, body.reference_file_id, body.bpm)
+        return song_view(db, c.tenant, svc.get_song(db, c.tenant, song_id))
 
     # ---- rubrics
-    @app.post("/v1/rubrics", status_code=201, dependencies=guard)
-    def create_rubric(body: dict, db=Depends(db_session)):
-        row = svc.create_rubric(db, body)
+    @app.post("/v1/rubrics", status_code=201)
+    def create_rubric(body: dict, c: Caller = Depends(caller), db=Depends(db_session)):
+        row = svc.create_rubric(db, c.tenant, body)
         return {"rubric_id": row.rubric_id, "version": row.version}
 
-    @app.get("/v1/rubrics", dependencies=guard)
-    def list_rubrics(db=Depends(db_session)):
-        rows = db.execute(select(RubricRow).order_by(RubricRow.rubric_id, RubricRow.version)).scalars()
-        return [{"rubric_id": r.rubric_id, "version": r.version,
-                 "criteria": [c["id"] for c in r.body["criteria"]]} for r in rows]
+    @app.get("/v1/rubrics")
+    def list_rubrics(c: Caller = Depends(caller), db=Depends(db_session)):
+        return [{"rubric_id": r.rubric_id, "version": r.version, "criteria": [x["id"] for x in r.body["criteria"]]}
+                for r in svc.list_rubrics(db, c.tenant)]
 
-    @app.get("/v1/rubrics/{rubric_id}", dependencies=guard)
-    def get_rubric(rubric_id: str, version: int | None = None, db=Depends(db_session)):
-        return svc.get_rubric(db, rubric_id, version).body
+    @app.post("/v1/rubrics/test")
+    def rubric_test(body: RubricTestIn, c: Caller = Depends(caller), db=Depends(db_session)):
+        """Re-score recent assessments with a candidate rubric and show the change. Saves nothing."""
+        return svc.try_rubric(db, c.tenant, body.rubric, body.song_id, body.limit)
+
+    @app.get("/v1/rubrics/{rubric_id}")
+    def get_rubric(rubric_id: str, version: int | None = None, c: Caller = Depends(caller), db=Depends(db_session)):
+        return svc.get_rubric(db, c.tenant, rubric_id, version).body
 
     # ---- assessments
-    @app.post("/v1/assessments", status_code=202, dependencies=guard)
+    @app.post("/v1/assessments", status_code=202)
     def create_assessment(body: AssessmentIn, idempotency_key: str | None = Header(None),
-                          db=Depends(db_session)):
-        a, created = svc.create_assessment(db, body.model_dump(), idempotency_key)
+                          c: Caller = Depends(caller), db=Depends(db_session)):
+        a, created = svc.create_assessment(db, c.tenant, body.model_dump(), idempotency_key)
         return JSONResponse({"assessment_id": a.id, "status": a.status, "created": created},
                             status_code=202 if created else 200)
 
-    @app.get("/v1/assessments", dependencies=guard)
+    @app.get("/v1/assessments")
     def list_assessments(status: str | None = None, student_id: str | None = None,
-                         limit: int = Query(50, le=200), db=Depends(db_session)):
-        q = select(Assessment).order_by(Assessment.created_at.desc()).limit(limit)
-        if status:
-            q = q.where(Assessment.status == status)
-        if student_id:
-            q = q.where(Assessment.student_id == student_id)
-        return [svc.assessment_view(a) for a in db.execute(q).scalars()]
+                         limit: int = Query(50, le=200), c: Caller = Depends(caller), db=Depends(db_session)):
+        return [svc.assessment_view(a) for a in svc.list_assessments(db, c.tenant, status, student_id, limit)]
 
-    @app.get("/v1/assessments/{asm_id}", dependencies=guard)
-    def get_assessment(asm_id: str, db=Depends(db_session)):
-        return svc.assessment_view(svc.get_assessment(db, asm_id))
+    @app.get("/v1/assessments/{asm_id}")
+    def get_assessment(asm_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
+        return svc.assessment_view(svc.get_assessment(db, c.tenant, asm_id))
 
-    @app.get("/v1/assessments/{asm_id}/notes", dependencies=guard)
-    def get_notes(asm_id: str, db=Depends(db_session)):
-        a = svc.get_assessment(db, asm_id)
+    @app.get("/v1/assessments/{asm_id}/notes")
+    def get_notes(asm_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
+        a = svc.get_assessment(db, c.tenant, asm_id)
         if not a.result:
             raise svc.ServiceError("not_ready", f"assessment is {a.status}", 409)
         return {"assessment_id": a.id, "notes": a.result.get("notes", [])}
 
-    @app.post("/v1/assessments/{asm_id}/review", status_code=201, dependencies=guard)
-    def review(asm_id: str, body: ReviewIn, db=Depends(db_session)):
-        rv = svc.record_review(db, asm_id, body.reviewer, body.corrections, body.teacher_scores,
-                               body.overall_score, body.comment)
+    @app.post("/v1/assessments/{asm_id}/review", status_code=201)
+    def review(asm_id: str, body: ReviewIn, c: Caller = Depends(caller), db=Depends(db_session)):
+        rv = svc.record_review(db, c.tenant, asm_id, body.reviewer, body.corrections, body.teacher_scores,
+                               body.overall_score, body.comment, actor=c.actor)
         return {"review_id": rv.id, "assessment_id": asm_id, "status": "reviewed"}
 
-    @app.get("/v1/assessments/{asm_id}/reviews", dependencies=guard)
-    def list_reviews(asm_id: str, db=Depends(db_session)):
-        svc.get_assessment(db, asm_id)
-        rows = db.execute(select(Review).where(Review.assessment_id == asm_id)).scalars()
+    @app.get("/v1/assessments/{asm_id}/reviews")
+    def list_reviews(asm_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
         return [{"review_id": r.id, "reviewer": r.reviewer, "corrections": r.corrections,
                  "teacher_scores": r.teacher_scores, "overall_score": r.overall_score,
-                 "comment": r.comment, "created_at": r.created_at.isoformat()} for r in rows]
+                 "comment": r.comment, "created_at": r.created_at.isoformat()}
+                for r in svc.list_reviews(db, c.tenant, asm_id)]
 
-    @app.get("/v1/review-queue", dependencies=guard)
-    def queue(limit: int = Query(50, le=200), db=Depends(db_session)):
-        return [svc.assessment_view(a) for a in svc.review_queue(db, limit)]
+    @app.get("/v1/review-queue")
+    def queue(limit: int = Query(50, le=200), c: Caller = Depends(caller), db=Depends(db_session)):
+        return [svc.assessment_view(a) for a in svc.review_queue(db, c.tenant, limit)]
+
+    # ---- privacy
+    @app.delete("/v1/students/{student_id}")
+    def delete_student(student_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
+        """Erase a student's recordings, results and reviews (right to erasure)."""
+        return svc.delete_student(db, store, c.tenant, student_id, actor=c.actor)
+
+    @app.get("/v1/audit")
+    def audit_log(limit: int = Query(100, le=1000), c: Caller = Depends(caller), db=Depends(db_session)):
+        return [{"at": e.at.isoformat(), "actor": e.actor, "action": e.action, "resource": e.resource,
+                 "detail": e.detail} for e in svc.audit_entries(db, c.tenant, limit)]
 
     return app

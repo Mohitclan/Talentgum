@@ -119,6 +119,9 @@ METRICS: dict[str, Callable[[Analysis, dict], float | None]] = {
         else 100.0 * float(np.mean(np.abs(np.log(np.clip(a.duration_ratio, 1e-3, None)))
                                    <= np.log(1 + p.get("tolerance", 0.5))))),
     "dynamic_variation_vel_std": lambda a, p: None if a.velocity_flat else a.velocity_std,
+    "restart_count": lambda a, p: float(len(a.restarts)),
+    "pedal_use_pct": lambda a, p: (
+        None if not a.pedal_supported or a.pedal_down_share is None else 100.0 * a.pedal_down_share),
 }
 
 

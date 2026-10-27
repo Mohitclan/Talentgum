@@ -160,6 +160,7 @@ def worker(
 def ingest(
     manifest: Path = typer.Argument(..., exists=True, help="Client manifest JSON (see ras/service/ingest.py)"),
     data_dir: Path = typer.Option(Path("data/service")),
+    tenant: str = typer.Option("local", help="Tenant that owns the data"),
 ):
     """Load songs, a rubric and recordings from a manifest and queue them for the worker."""
     from ras.service.config import Settings
@@ -171,7 +172,7 @@ def ingest(
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     Session = make_session_factory(settings.database_url)
     with Session() as db:
-        out = ingest_manifest(db, LocalStore(settings.data_dir / "objects"), manifest)
+        out = ingest_manifest(db, LocalStore(settings.data_dir / "objects"), manifest, tenant)
     console.print(f"songs {out['songs']} (+{out['references_added']} versions), rubric {out['rubric']}, "
                   f"{len(out['queued'])} recordings queued")
     for e in out["errors"]:
@@ -184,6 +185,7 @@ def evaluate(
     data_dir: Path = typer.Option(Path("data/service")),
     target_false_alarm: float = typer.Option(0.10, help="Highest acceptable share of wrong error claims"),
     out: Optional[Path] = typer.Option(None, help="Write the full JSON report here"),
+    tenant: str = typer.Option("local"),
 ):
     """Compare results with teacher reviews: error precision/recall, score agreement, confidence threshold."""
     from ras.service.config import Settings
@@ -193,7 +195,7 @@ def evaluate(
 
     Session = make_session_factory(Settings(data_dir=data_dir).database_url)
     with Session() as db:
-        report = run_eval(load_cases(db), target_false_alarm)
+        report = run_eval(load_cases(db, tenant), target_false_alarm)
     if not report["n_reviewed"]:
         console.print("No reviewed assessments yet. Teachers review in the web UI (Review queue).")
         return
@@ -207,6 +209,70 @@ def evaluate(
                   f"(target false-alarm rate {c['target_false_alarm_rate']})")
     if out:
         out.write_text(json.dumps(report, indent=1, default=str))
+
+
+def _session(data_dir: Path):
+    from ras.service.config import Settings
+    from ras.service.db import make_session_factory
+
+    return make_session_factory(Settings(data_dir=data_dir).database_url)
+
+
+@app.command("tenant-create")
+def tenant_create(
+    tenant_id: str = typer.Argument(..., help="Short id, e.g. talentgum"),
+    name: str = typer.Option("", help="Display name"),
+    data_dir: Path = typer.Option(Path("data/service")),
+):
+    """Create a tenant (client organisation) and print its first API key. The key is shown only once."""
+    from ras.service import services as svc
+
+    with _session(data_dir)() as db:
+        svc.create_tenant(db, tenant_id, name or tenant_id)
+        key = svc.create_api_key(db, tenant_id, "first key")
+    console.print(f"Tenant [bold]{tenant_id}[/bold] created. API key (store it now, it is not shown again):")
+    console.print(key)
+
+
+@app.command("key-create")
+def key_create(
+    tenant_id: str = typer.Argument(...),
+    label: str = typer.Option(""),
+    data_dir: Path = typer.Option(Path("data/service")),
+):
+    """Issue another API key for a tenant (for rotation). Shown only once."""
+    from ras.service import services as svc
+
+    with _session(data_dir)() as db:
+        console.print(svc.create_api_key(db, tenant_id, label))
+
+
+@app.command("key-revoke")
+def key_revoke(
+    prefix: str = typer.Argument(..., help="The first 12 characters of the key"),
+    data_dir: Path = typer.Option(Path("data/service")),
+):
+    """Revoke an API key immediately."""
+    from ras.service import services as svc
+
+    with _session(data_dir)() as db:
+        n = svc.revoke_api_key(db, prefix)
+    console.print(f"{n} key(s) revoked")
+
+
+@app.command("purge-audio")
+def purge_audio(
+    older_than_days: int = typer.Option(..., help="Delete recordings of assessments finished more than N days ago"),
+    data_dir: Path = typer.Option(Path("data/service")),
+    tenant: Optional[str] = typer.Option(None, help="Only this tenant (default: all)"),
+):
+    """Retention: delete raw recordings after the retention period. Results and reviews are kept."""
+    from ras.service import services as svc
+    from ras.service.storage import LocalStore
+
+    with _session(data_dir)() as db:
+        n = svc.purge_audio(db, LocalStore(data_dir / "objects"), older_than_days, tenant)
+    console.print(f"{n} recording(s) deleted")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ class PerfSpec:
     n_extra: int = 0
     pauses: list[tuple[int, float]] = field(default_factory=list)  # (ref note index, seconds)
     transpose: int = 0
+    # (stop before reference row `at`, go back to row `back_to`, pause seconds): an abandoned attempt
+    restarts: list[tuple[int, int, float]] = field(default_factory=list)
     start_offset_s: float = 1.0
     seed: int = 0
 
@@ -37,6 +39,7 @@ class Truth:
     jitter_ms: np.ndarray  # injected onset deviation per reference note
     extras: list[PerfNote]
     notes: list[PerfNote]  # everything actually played (the transcription target)
+    replayed: list[PerfNote] = field(default_factory=list)  # abandoned attempts before a restart
     transpose: int = 0
 
     def counts(self) -> dict[str, int]:
@@ -101,6 +104,7 @@ def simulate_performance(ref: Reference, spec: PerfSpec) -> Truth:
 
     jitter = rng.normal(0.0, spec.jitter_ms, n)
     played_notes: list[PerfNote] = []
+    played_rows: list[int] = []
     for i in range(n):
         if played[i] is None:
             continue
@@ -109,6 +113,26 @@ def simulate_performance(ref: Reference, spec: PerfSpec) -> Truth:
         dur = max(0.08, float(notes["duration_beat"][i]) * spb_at(beat) * spec.duration_factor)
         vel = int(np.clip(rng.normal(spec.velocity_mean, spec.velocity_std), 20, 120))
         played_notes.append(PerfNote(played[i] + spec.transpose, onset, onset + dur, vel))
+        played_rows.append(i)
+
+    replayed: list[PerfNote] = []
+    for at, back_to, pause_s in spec.restarts:
+        b_from, b_to = float(notes["onset_beat"][back_to]), float(notes["onset_beat"][at])
+        attempt = [i for i, r in enumerate(played_rows) if b_from <= notes["onset_beat"][r] < b_to]
+        later = [i for i, r in enumerate(played_rows) if notes["onset_beat"][r] >= b_from]
+        if not attempt:
+            continue
+        t_from = min(played_notes[i].onset for i in attempt)
+        t_to = min((played_notes[i].onset for i in later if notes["onset_beat"][played_rows[i]] >= b_to),
+                   default=max(played_notes[i].offset for i in attempt))
+        copies = [PerfNote(played_notes[i].pitch, played_notes[i].onset, played_notes[i].offset,
+                           played_notes[i].velocity) for i in attempt]
+        shift = (t_to - t_from) + pause_s
+        for i in later:
+            played_notes[i].onset += shift
+            played_notes[i].offset += shift
+        replayed += copies
+    played_notes += replayed
 
     extras: list[PerfNote] = []
     if spec.n_extra and played_notes:
@@ -127,7 +151,7 @@ def simulate_performance(ref: Reference, spec: PerfSpec) -> Truth:
 
     played_notes = _fix_same_pitch_overlap(played_notes)
     played_notes.sort(key=lambda p: (p.onset, p.pitch))
-    return Truth(status, played, jitter, extras, played_notes, spec.transpose)
+    return Truth(status, played, jitter, extras, played_notes, transpose=spec.transpose, replayed=replayed)
 
 
 def _fix_same_pitch_overlap(notes: list[PerfNote]) -> list[PerfNote]:

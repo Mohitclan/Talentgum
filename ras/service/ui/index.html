@@ -67,6 +67,7 @@
   <h1>Recording Assessment System</h1>
   <nav id="nav"></nav>
   <span style="flex:1"></span>
+  <span id="who" class="muted"></span>
   <input id="apikey" placeholder="API key (if set)" style="width:150px" aria-label="API key">
 </header>
 <main id="main"></main>
@@ -280,17 +281,29 @@ async function songs() {
       h('label', { for: 'ref' }, 'Reference (MusicXML, MXL or MIDI)'), h('input', { id: 'ref', type: 'file', accept: '.musicxml,.xml,.mxl,.mid,.midi' }),
       h('p', { class: 'muted' }, 'An existing Song ID adds a new immutable version.'), h('button', { class: 'primary', type: 'submit' }, 'Save song'));
     const rubricBox = h('textarea', { id: 'rjson', placeholder: '{"rubric_id": "...", "criteria": [...]}' });
+    const testOut = h('div', { class: 'muted', style: 'margin-top:10px' });
     const rForm = h('form', { class: 'card', onsubmit: async (ev) => { ev.preventDefault();
       try { await api('/rubrics', { method: 'POST', json: JSON.parse(rubricBox.value) }); songs_(); } catch (e) { say(String(e.message || e), true); } } },
-      h('h2', {}, 'Add a rubric (JSON)'), rubricBox, h('p', { class: 'muted' }, 'Weights must add up to 1. Saving an existing rubric ID creates the next version.'),
-      h('button', { class: 'primary', type: 'submit' }, 'Save rubric'));
+      h('h2', {}, 'Add a rubric (JSON)'), rubricBox, h('p', { class: 'muted' }, 'Weights must add up to 1. Saving an existing rubric ID creates the next version. Test it first: nothing is saved by a test.'),
+      h('button', { class: 'primary', type: 'submit' }, 'Save rubric'), ' ',
+      h('button', { class: 'primary', type: 'button', style: 'background:var(--soft)', onclick: async () => {
+        try {
+          const r = await api('/rubrics/test', { method: 'POST', json: { rubric: JSON.parse(rubricBox.value) } });
+          testOut.replaceChildren(h('p', {}, `${r.assessments} past results re-scored · mean change ${r.mean_delta ?? '–'} · largest ${r.max_abs_delta ?? '–'} · ${r.band_changes} band changes`),
+            r.rows.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Student', 'Song', 'Now', 'With this rubric', 'Change'].map((t) => h('th', {}, t)))),
+              h('tbody', {}, r.rows.slice(0, 50).map((x) => h('tr', {}, h('td', {}, x.student_id || ''), h('td', {}, x.song_id),
+                h('td', {}, x.current_score ?? ''), h('td', {}, x.candidate_score ?? ''), h('td', {}, x.delta == null ? '' : (x.delta > 0 ? '+' : '') + x.delta))))) : null);
+        } catch (e) { say(String(e.message || e), true); }
+      } }, 'Test against past results'), testOut);
     main(msg, h('div', { class: 'card' }, h('h2', {}, 'Songs'), songs.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Song', 'Versions', 'Notes', 'Bars', 'Tempo'].map((t) => h('th', {}, t)))),
       h('tbody', {}, songs.map((s) => { const r = s.references[s.references.length - 1]; return h('tr', {}, h('td', {}, s.title + ' (' + s.song_id + ')'), h('td', {}, s.references.length), h('td', {}, r.notes), h('td', {}, r.measures), h('td', {}, Math.round(r.bpm) + ' bpm')); }))) : h('p', { class: 'muted' }, 'No songs yet.')),
       sForm, h('div', { class: 'card' }, h('h2', {}, 'Rubrics'), rubrics.length ? h('ul', {}, rubrics.map((r) => h('li', {}, r.rubric_id + ' v' + r.version + ': ' + r.criteria.join(', ')))) : h('p', { class: 'muted' }, 'No rubrics yet.')), rForm);
   } catch (e) { main(fail(e)); }
 }
 const songs_ = songs;
-renderNav(); show('assess');
+async function who() { try { const m = await api('/me'); $('#who').textContent = 'tenant: ' + m.tenant; } catch { $('#who').textContent = 'API key needed'; } }
+$('#apikey').addEventListener('change', who);
+renderNav(); show('assess'); who();
 </script>
 </body>
 </html>

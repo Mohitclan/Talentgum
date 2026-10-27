@@ -51,7 +51,7 @@ def _split_measures(events, beats_per_measure: int):
     return measures
 
 
-def song_to_musicxml(song: Song, repeat: bool = False) -> str:
+def song_to_musicxml(song: Song, repeat: bool = False, tempo_changes: dict[int, float] | None = None) -> str:
     rh = _split_measures(song.rh, song.beats_per_measure)
     lh = _split_measures(song.lh, song.beats_per_measure) if song.lh else []
     n = max(len(rh), len(lh))
@@ -74,8 +74,11 @@ def song_to_musicxml(song: Song, repeat: bool = False) -> str:
                 f"<beat-unit>quarter</beat-unit><per-minute>{song.bpm:g}</per-minute>"
                 f'</metronome></direction-type><sound tempo="{song.bpm:g}"/></direction>'
             )
-        if repeat and m == n - 1:
-            pass  # the repeat barline is appended after the notes
+        if tempo_changes and (m + 1) in tempo_changes and m > 0:
+            bpm = tempo_changes[m + 1]
+            out.append(f'<direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit>'
+                       f'<per-minute>{bpm:g}</per-minute></metronome></direction-type><sound tempo="{bpm:g}"/>'
+                       "</direction>")
         for p, b in (rh[m] if m < len(rh) else [(None, song.beats_per_measure)]):
             out.append(_note_xml(p, b, 1, 1))
         if staves == 2:
@@ -90,8 +93,9 @@ def song_to_musicxml(song: Song, repeat: bool = False) -> str:
     return "\n".join(out)
 
 
-def write_musicxml(song: Song, path: str | Path, repeat: bool = False) -> Path:
+def write_musicxml(song: Song, path: str | Path, repeat: bool = False,
+                   tempo_changes: dict[int, float] | None = None) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(song_to_musicxml(song, repeat=repeat), encoding="utf-8")
+    path.write_text(song_to_musicxml(song, repeat=repeat, tempo_changes=tempo_changes), encoding="utf-8")
     return path

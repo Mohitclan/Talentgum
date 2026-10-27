@@ -55,6 +55,12 @@ def _finish(rows, bpm, sha, source, warns) -> Reference:
     return Reference(notes, optional, bpm, sha, source, n_measures, warns)
 
 
+def _quarter_bpm(tempo) -> float:
+    """Tempo in quarter notes per minute, whatever note value the score's metronome mark uses."""
+    mpq = getattr(tempo, "microseconds_per_quarter", None)
+    return 60e6 / mpq if mpq else float(tempo.bpm)
+
+
 def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | None = None) -> Reference:
     import partitura as pt
 
@@ -73,20 +79,36 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
         tempi = list(part.iter_all(pt.score.Tempo))
         measures = part.measure_number_map(na["onset_div"]) if len(na) else []
 
-    if bpm is None:
-        bpm = float(tempi[0].bpm) if tempi else DEFAULT_BPM
-        if not tempi:
+    # tempo map: (start in quarters, seconds per quarter), applied piecewise to every note
+    if bpm is not None or not tempi:
+        if bpm is None:
             warns.append(f"no_tempo_in_score_using_{DEFAULT_BPM:g}_bpm")
-    spb = 60.0 / bpm
+            bpm = DEFAULT_BPM
+        segments = [(0.0, 60.0 / bpm)]
+    else:
+        changes = sorted({float(part.quarter_map(t.start.t)): 60.0 / _quarter_bpm(t) for t in tempi}.items())
+        segments = [(0.0, changes[0][1])] + [c for c in changes if c[0] > 0]
+        bpm = 60.0 / segments[0][1]
+        if len(segments) > 1:
+            warns.append(f"{len(segments) - 1}_tempo_change(s)_applied")
+
+    def to_sec(q: float) -> float:
+        total = 0.0
+        for k, (q0, spq) in enumerate(segments):
+            q1 = segments[k + 1][0] if k + 1 < len(segments) else float("inf")
+            if q <= q0:
+                break
+            total += (min(q, q1) - q0) * spq
+        return total
 
     with_dur = na[na["duration_quarter"] > 0]
     divs = float(np.median(with_dur["duration_div"] / with_dur["duration_quarter"])) if len(with_dur) else 1.0
 
     rows = []
     for i, n in enumerate(na):
+        on, du = float(n["onset_quarter"]), float(n["duration_quarter"])
         rows.append((
-            "", int(n["pitch"]), float(n["onset_quarter"]), float(n["duration_quarter"]),
-            float(n["onset_quarter"]) * spb, float(n["duration_quarter"]) * spb,
+            "", int(n["pitch"]), on, du, to_sec(on), to_sec(on + du) - to_sec(on),
             int(measures[i]), float(n["rel_onset_div"]) / divs + 1.0, int(n["voice"]),
         ))
     ref = _finish(rows, bpm, _sha256(path), "musicxml", warns)
@@ -105,9 +127,12 @@ def load_midi(path: str | Path, bpm: float | None = None) -> Reference:
     if bpm is None:
         bpm = float(tempi[0]) if len(tempi) else DEFAULT_BPM
     if len(tempi) > 1:
-        warns.append("midi_tempo_changes_ignored")
-    spb = 60.0 / bpm
+        warns.append(f"{len(tempi) - 1}_tempo_change(s)_applied")
     downbeats = pm.get_downbeats()
+
+    def beats(t: float) -> float:  # quarter notes from ticks, so tempo changes are respected
+        return pm.time_to_tick(t) / pm.resolution
+
     notes = sorted((n for inst in pm.instruments if not inst.is_drum for n in inst.notes),
                    key=lambda n: (n.start, n.pitch))
     rows = []
@@ -115,8 +140,8 @@ def load_midi(path: str | Path, bpm: float | None = None) -> Reference:
         m = int(np.searchsorted(downbeats, n.start + 1e-6, side="right"))
         m_start = downbeats[m - 1] if m >= 1 else 0.0
         rows.append((
-            "", n.pitch, n.start / spb, (n.end - n.start) / spb, n.start, n.end - n.start,
-            max(m, 1), (n.start - m_start) / spb + 1.0, 1,
+            "", n.pitch, beats(n.start), beats(n.end) - beats(n.start), n.start, n.end - n.start,
+            max(m, 1), beats(n.start) - beats(m_start) + 1.0, 1,
         ))
     return _finish(rows, bpm, _sha256(path), "midi", warns)
 

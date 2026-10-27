@@ -50,6 +50,9 @@ def make_feedback(analysis: Analysis, ref: Reference, timing_tolerance_ms: float
     for r in sorted(late, key=lambda x: -abs(x.onset_dev_ms))[:2]:
         way = "a little late" if r.onset_dev_ms > 0 else "a little early"
         issues.append((2, f"In {_where(r)}, a note came in {way}. Tapping the beat can help."))
+    for rs in analysis.restarts[:1]:
+        issues.append((2, f"You started again around bar {rs['from_measure']}. That's fine; next time "
+                          "try to keep going even if a note slips."))
     for p in analysis.pauses[:1]:
         issues.append((2, f"There was a long pause around bar {p['measure']}. "
                           "Try to keep going, even slowly."))

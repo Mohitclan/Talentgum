@@ -1,6 +1,9 @@
 # Delivery phases
 
 ## Phase 1: Core engine (CLI, local): built, gaps closed out (see benchmarks/phase1_closeout.md)
+Second close-out round: restart detection (`replayed` notes, restart events, `restart_count` metric),
+MusicXML and MIDI tempo changes applied, sustain-pedal use measured (`pedal_use_pct`), a too-late start
+timestamp falls back to the full recording, and a setup script tested on a clean copy.
 Setup, synthetic data tool, the full pipeline as a CLI, and a benchmark harness.
 Done when injected errors are detected at the expected precision/recall on synthetic data and the
 model comparison is measured locally. See `README.md` and the latest `data/runs/*/report.md`.
@@ -15,8 +18,13 @@ model comparison is measured locally. See `README.md` and the latest `data/runs/
   correction and teacher scores, history, songs and rubrics.
 * Review storage as ground truth; `ras ingest` (bulk load client data) and `ras evaluate` (error-detection
   precision/recall vs teachers, score agreement, recommended confidence threshold).
-* Not done: restart-aware matching, confidence calibration on real reviews (the tool exists, the data does not),
-  multi-tenant isolation, authentication beyond a shared API key, S3/SQS adapters (Phase 3).
+* Tenants with per-tenant hashed API keys, isolation of every table and storage prefix, key rotation
+  and revocation.
+* Rubric test (re-score past results with a candidate rubric), student erasure, audio retention purge,
+  audit log of recording access, reviews and erasures.
+* Not done: confidence calibration on real reviews (the tool exists, the data does not), user accounts and
+  roles for teachers (all callers of a tenant are equal), S3/SQS adapters and PostgreSQL in practice (Phase 3),
+  model training endpoints (no model is trained in this design).
 
 ## Phase 3: AWS and GPU readiness: on hold until an AWS account and GPU exist
 Dockerfiles, S3/SQS adapters, ECS/Fargate definitions, CloudWatch/budget alerts, GPU benchmarking and

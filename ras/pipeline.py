@@ -57,6 +57,7 @@ class AssessmentResult(BaseModel):
     transposition: dict = Field(default_factory=dict)
     summary: dict = Field(default_factory=dict)
     scoring: dict = Field(default_factory=dict)
+    scoring_inputs: dict = Field(default_factory=dict)  # lets a new rubric re-score this result later
     confidence: dict = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     notes: list[dict] = Field(default_factory=list)
@@ -75,6 +76,7 @@ class PipelineConfig:
     normalize_level: bool = True
     start_margin_s: float = 1.0
     start_check_window_s: float = 2.0
+    start_cut_risk_s: float = 0.3  # a note this close to the crop point means the crop cut into the playing
     unfold_repeats: bool = True
     # Double-check 'missing' notes against the audio. OFF by default: on synthetic audio the evidence
     # did not separate dropped notes from truly absent ones; evaluate on real recordings first.
@@ -90,6 +92,33 @@ def _git_commit() -> str | None:
         return out.stdout.strip() or None
     except Exception:
         return None
+
+
+def _sounding_at_start(audio, sr: int, window_s: float = 0.25, ratio: float = 0.25) -> bool:
+    """Is the music already loud at the very start of this (cropped) audio?
+
+    With a correct start timestamp the crop keeps about a second of near-silence before the first note.
+    """
+    import numpy as np
+
+    frame = int(0.05 * sr)
+    n = len(audio) // frame
+    if n < 10:
+        return False
+    rms = np.sqrt(np.mean(audio[: n * frame].reshape(n, frame) ** 2, axis=1))
+    head = rms[: max(1, int(window_s / 0.05))].mean()
+    return bool(head > ratio * np.percentile(rms, 90))
+
+
+def _add_pedal(analysis, tr, notes: list[PerfNote]) -> None:
+    """Sustain-pedal use over the performance (only when the transcriber reports pedal)."""
+    analysis.pedal_supported = bool(tr.supports_pedal)
+    if not tr.supports_pedal or not notes:
+        return
+    lo, hi = min(n.onset for n in notes), max(n.offset for n in notes)
+    analysis.pedal_events = len(tr.pedal)
+    down = sum(max(0.0, min(p.end, hi) - max(p.start, lo)) for p in tr.pedal)
+    analysis.pedal_down_share = round(down / (hi - lo), 3) if hi > lo else 0.0
 
 
 def assess(
@@ -129,6 +158,7 @@ def assess(
 
     # 2. crop at the start timestamp, level, transcribe
     t0 = time.perf_counter()
+    full_audio = audio
     audio, offset = crop_from_start(audio, cfg.sr, start_s, cfg.start_margin_s)
     if cfg.normalize_level:
         audio = normalise_level(audio)
@@ -136,6 +166,17 @@ def assess(
 
     t0 = time.perf_counter()
     tr = transcriber.transcribe(audio, cfg.sr)
+    start_too_late = False
+    first_local = min((n.onset for n in tr.notes), default=None)
+    if offset > 0 and (_sounding_at_start(audio, cfg.sr) or
+                       (first_local is not None and first_local < cfg.start_cut_risk_s)):
+        # playing was already under way where we cut: the timestamp is too late and the crop may
+        # have removed notes, so transcribe the whole recording instead
+        start_too_late = True
+        audio = normalise_level(full_audio) if cfg.normalize_level else full_audio
+        offset = 0.0
+        tr = transcriber.transcribe(audio, cfg.sr)
+        res.warnings.append("start_timestamp_too_late_reassessed_on_full_recording")
     mark("transcribe", t0)
     res.versions["transcriber"] = tr.version
     notes = [PerfNote(n.pitch, n.onset + offset, n.offset + offset, n.velocity) for n in tr.notes]
@@ -145,7 +186,7 @@ def assess(
     start_suspect = False
     first_onset = min((n.onset for n in notes), default=None)
     if start_s is not None and first_onset is not None:
-        start_suspect = abs(first_onset - start_s) > cfg.start_check_window_s
+        start_suspect = start_too_late or abs(first_onset - start_s) > cfg.start_check_window_s
     res.start_timestamp = {"given_s": start_s, "first_onset_s": first_onset, "suspect": start_suspect}
     if start_suspect:
         res.warnings.append("start_timestamp_suspect")
@@ -179,6 +220,7 @@ def assess(
     analysis = analyze(ref, perf, alignment, AnalysisConfig(
         pause_threshold_s=rubric.options.pause_threshold_s))
     res.warnings += analysis.notes
+    _add_pedal(analysis, tr, notes)
     mark("align_and_analyse", t0)
 
     t0 = time.perf_counter()
@@ -197,6 +239,7 @@ def assess(
         start_suspect=start_suspect, transposed_not_allowed=bool(shift and not allowed))
     res.summary = _py(analysis.summary())
     res.scoring = _py(scoring.to_dict())
+    res.scoring_inputs = _py(analysis.scoring_inputs())
     res.confidence = {"value": conf.value, "needs_review": conf.needs_review, "reasons": conf.reasons}
     res.notes = [_py(asdict(n)) for n in analysis.results]
     res.feedback = make_feedback(analysis, ref, rubric.options.timing_tolerance_ms)

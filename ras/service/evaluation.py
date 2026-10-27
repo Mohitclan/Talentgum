@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ras.eval.metrics import bootstrap_ci, prf
 
-from .db import Assessment, Review
+from .db import DEFAULT_TENANT, Assessment, Review
 
 ERR = ("wrong_pitch", "wrong_octave", "missing")
 
@@ -63,10 +63,11 @@ def case_from(a: Assessment, review: Review) -> ReviewedCase:
                         review.teacher_scores, crit, counts)
 
 
-def load_cases(db: Session) -> list[ReviewedCase]:
-    """One case per reviewed assessment (the latest review wins)."""
+def load_cases(db: Session, tenant: str = DEFAULT_TENANT) -> list[ReviewedCase]:
+    """One case per reviewed assessment of this tenant (the latest review wins)."""
     cases = []
-    for a in db.execute(select(Assessment).where(Assessment.status == "reviewed")).scalars():
+    for a in db.execute(select(Assessment).where(Assessment.tenant_id == tenant,
+                                                 Assessment.status == "reviewed")).scalars():
         rv = db.execute(select(Review).where(Review.assessment_id == a.id)
                         .order_by(Review.id.desc()).limit(1)).scalar()
         if rv is not None and a.result:

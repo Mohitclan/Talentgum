@@ -29,6 +29,8 @@ class AnalysisConfig:
     max_wrong_interval: int = 7  # semitones; larger jumps are treated as missing + extra
     flat_velocity_std: float = 2.0  # below this the keyboard is treated as not velocity-sensitive
     implausible_beats: float = 0.8  # a match this many beats off its expected time is a mismatch
+    min_restart_notes: int = 4  # a run of unexplained notes this long that replays the score is a restart
+    restart_match_share: float = 0.6  # ...when at least this share of it matches a stretch of the score
 
 
 @dataclass
@@ -71,6 +73,11 @@ class Analysis:
     velocity_flat: bool = True
     notes: list[str] = field(default_factory=list)
     n_uncertain: int = 0  # reported missing, but the audio shows an onset: we cannot tell
+    n_replayed: int = 0  # notes of an abandoned attempt the student then played again
+    restarts: list[dict] = field(default_factory=list)
+    pedal_supported: bool = False
+    pedal_events: int = 0
+    pedal_down_share: float | None = None  # share of the performance time with the sustain pedal down
 
     @property
     def n_scored(self) -> int:
@@ -96,6 +103,24 @@ class Analysis:
     def n_matched_for_timing(self) -> int:
         return self.n_correct
 
+    _SNAPSHOT = ("n_ref", "n_perf", "n_correct", "n_wrong_pitch", "n_wrong_octave", "n_missing", "n_extra",
+                 "n_optional_played", "chords_total", "chords_correct", "ref_bpm", "mean_bpm", "tempo_cv", "pauses",
+                 "velocity_std", "velocity_range", "velocity_flat", "n_uncertain", "n_replayed", "restarts",
+                 "pedal_supported", "pedal_events", "pedal_down_share")
+
+    def scoring_inputs(self) -> dict:
+        """Everything the rubric engine reads, so results can be re-scored later without the audio."""
+        d = {k: getattr(self, k) for k in self._SNAPSHOT}
+        d["onset_dev_ms"] = [round(float(x), 1) for x in self.onset_dev_ms]
+        d["duration_ratio"] = [round(float(x), 3) for x in self.duration_ratio]
+        return d
+
+    @classmethod
+    def from_scoring_inputs(cls, d: dict) -> "Analysis":
+        kw = {k: d[k] for k in cls._SNAPSHOT if k in d}
+        return cls(results=[], onset_dev_ms=np.array(d.get("onset_dev_ms", [])),
+                   duration_ratio=np.array(d.get("duration_ratio", [])), **kw)
+
     def summary(self) -> dict:
         return {
             "score_notes": self.n_ref,
@@ -112,6 +137,10 @@ class Analysis:
             "reference_bpm": self.ref_bpm,
             "tempo_cv_pct": None if self.tempo_cv is None else self.tempo_cv * 100,
             "pause_count": len(self.pauses),
+            "restart_count": len(self.restarts),
+            "replayed": self.n_replayed,
+            "pedal_events": self.pedal_events if self.pedal_supported else None,
+            "pedal_down_share": self.pedal_down_share,
             "onset_dev_median_abs_ms": (
                 float(np.median(np.abs(self.onset_dev_ms))) if len(self.onset_dev_ms) else None),
             "velocity_std": self.velocity_std,
@@ -137,6 +166,7 @@ class _Timing:
     pauses: list
     beat_lo: float = 0.0
     beat_hi: float = 0.0
+    backward_seg: set = field(default_factory=set)  # segments that start or end with a jump back in time
 
 
 def _segments(gbeat, gsec, cfg, ref_spb):
@@ -176,6 +206,9 @@ def _timing(ref: Reference, perf: list[PerfNote], pairs: list, cfg: AnalysisConf
     gsec = np.array([np.median(ps[gid == g]) for g in range(len(uniq))])
     gbeat = uniq
     spb, seg, extra = _segments(gbeat, gsec, cfg, ref_spb)
+    backward_seg = set()
+    for k in np.where(np.diff(gsec) <= 0)[0]:  # group k+1 is earlier than group k: a mismatch signature
+        backward_seg.update({int(seg[k]), int(seg[k + 1])})
 
     pauses = []
     for k in np.where(extra > cfg.pause_threshold_s)[0]:
@@ -184,6 +217,7 @@ def _timing(ref: Reference, perf: list[PerfNote], pairs: list, cfg: AnalysisConf
             "measure": int(ref.notes["measure"][r_idx]),
             "beat": float(ref.notes["beat_in_measure"][r_idx]),
             "extra_s": float(extra[k]),
+            "at_s": float(gsec[k + 1]),
         })
 
     slopes = np.full(len(gbeat), spb)
@@ -227,7 +261,7 @@ def _timing(ref: Reference, perf: list[PerfNote], pairs: list, cfg: AnalysisConf
             return float(_iso.predict([beat])[0])
 
     return _Timing(pairs, gid, seg, spb, slopes, preds, exp_sec, mean_bpm, tempo_cv, pauses,
-                   lo, hi)
+                   lo, hi, backward_seg)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -284,6 +318,75 @@ def _assign(ref: Reference, perf: list[PerfNote], timing: _Timing, cfg: Analysis
     return sorted(pairs), wrongs, unmatched_ref, unmatched_perf
 
 
+def _local_align_matches(a: list[int], b: list[int]) -> tuple[int, int, int]:
+    """Smith-Waterman on pitch sequences: (number of equal pitches in the best local alignment,
+    index in `b` where that alignment starts, index in `b` where it ends)."""
+    H = np.zeros((len(a) + 1, len(b) + 1))
+    M = np.zeros_like(H, dtype=int)  # matches along the best path into each cell
+    best, best_ij = 0.0, (0, 0)
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            eq = a[i - 1] == b[j - 1]
+            options = [(0.0, 0), (H[i - 1, j - 1] + (1.0 if eq else -1.0), M[i - 1, j - 1] + int(eq)),
+                       (H[i - 1, j] - 1.0, M[i - 1, j]), (H[i, j - 1] - 1.0, M[i, j - 1])]
+            H[i, j], M[i, j] = max(options, key=lambda o: o[0])
+            if H[i, j] > best:
+                best, best_ij = H[i, j], (i, j)
+    i, j = best_ij
+    end = j
+    while i > 0 and j > 0 and H[i, j] > 0:  # walk back to the start of the local alignment
+        if H[i, j] == H[i - 1, j - 1] + (1.0 if a[i - 1] == b[j - 1] else -1.0):
+            i, j = i - 1, j - 1
+        elif H[i, j] == H[i - 1, j] - 1.0:
+            i -= 1
+        else:
+            j -= 1
+    return int(M[best_ij]), j, end
+
+
+def _find_restarts(ref: Reference, perf: list[PerfNote], extra_ps: list[int], spb: float,
+                   cfg: AnalysisConfig) -> list[tuple[list[int], int]]:
+    """Runs of unexplained notes that replay a stretch of the score: the student stopped and
+    started again. Returns (performed note indices, score row where the replayed stretch starts)."""
+    if len(extra_ps) < cfg.min_restart_notes:
+        return []
+    order = sorted(extra_ps, key=lambda p: (perf[p].onset, perf[p].pitch))
+    runs, cur = [], [order[0]]
+    for p in order[1:]:
+        if perf[p].onset - perf[cur[-1]].onset <= max(1.5, 2.5 * spb):
+            cur.append(p)
+        else:
+            runs.append(cur)
+            cur = [p]
+    runs.append(cur)
+    score_pitches = [int(x) for x in ref.notes["pitch"]]
+    found = []
+    for run in runs:
+        if len(run) < cfg.min_restart_notes:
+            continue
+        # order like the score: onset groups (chords), low to high pitch inside a chord
+        ordered, group, last = [], [], None
+        for p in run:
+            if last is not None and perf[p].onset - last > 0.09:
+                ordered += sorted(group, key=lambda q: perf[q].pitch)
+                group = []
+            group.append(p)
+            last = perf[p].onset
+        ordered += sorted(group, key=lambda q: perf[q].pitch)
+        matches, start, end = _local_align_matches([perf[p].pitch for p in ordered], score_pitches)
+        if matches >= cfg.min_restart_notes and matches >= cfg.restart_match_share * len(run):
+            found.append((run, start, end))
+    # runs that replay overlapping stretches of the score belong to one restart (the matcher may
+    # have interleaved the two attempts)
+    merged: list[list] = []
+    for run, start, end in sorted(found, key=lambda x: x[1]):
+        if merged and start <= merged[-1][2] + 4:
+            merged[-1] = [merged[-1][0] + run, merged[-1][1], max(merged[-1][2], end)]
+        else:
+            merged.append([run, start, end])
+    return [(run, start) for run, start, _ in merged]
+
+
 def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
             cfg: AnalysisConfig | None = None) -> Analysis:
     cfg = cfg or AnalysisConfig()
@@ -308,7 +411,10 @@ def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
         n_groups = len(timing.seg)
         for i in range(len(pairs)):
             g = timing.gid[i]
-            island = n_groups > 8 and len(sizes) > 1 and sizes.max() > 2 and sizes[timing.seg[g]] <= 2
+            # a tiny segment cut off by a jump BACK in time is a mismatch; one cut off only by
+            # pauses (a slow start, a restart) is real playing
+            island = (n_groups > 8 and len(sizes) > 1 and sizes.max() > 2 and sizes[timing.seg[g]] <= 2
+                      and int(timing.seg[g]) in timing.backward_seg)
             far = (not np.isnan(timing.preds[g])
                    and abs(perf[pairs[i][1]].onset - timing.preds[g]) > tol)
             if island or far:
@@ -431,8 +537,24 @@ def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
     results.sort(key=lambda x: (
         beats[x.ref_index] if x.ref_index is not None else 1e9, x.perf_onset_s or 0.0))
 
+    restarts = []
+    extra_ps = [x.perf_index for x in results if x.status == "extra"]
+    for run, start in _find_restarts(ref, perf, extra_ps, timing.spb, cfg):
+        in_run = set(run)
+        for x in results:
+            if x.status == "extra" and x.perf_index in in_run:
+                x.status = "replayed"
+        restarts.append({"at_s": round(min(perf[p].onset for p in run), 2), "notes": len(run),
+                         "from_measure": int(ref.notes["measure"][min(start, n_ref - 1)])})
+    pauses = list(timing.pauses)
+    if restarts:
+        notes_log.append(f"{len(restarts)}_restart(s)_detected")
+        # the silence around a restart is explained by the restart: do not report it twice
+        starts = [r["at_s"] for r in restarts]
+        pauses = [p for p in pauses if not any(p["at_s"] - p["extra_s"] - 3.0 <= t <= p["at_s"] for t in starts)]
+
     counts = {s: sum(1 for x in results if x.status == s)
-              for s in ("correct", "wrong_pitch", "wrong_octave", "missing", "extra")}
+              for s in ("correct", "wrong_pitch", "wrong_octave", "missing", "extra", "replayed")}
 
     # --- chords: score onset groups of >= 2 notes; correct when every tone is correct
     ok_ref = {x.ref_index for x in results if x.status == "correct"}
@@ -457,6 +579,7 @@ def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
         onset_dev_ms=np.array(list(onset_dev.values())),
         duration_ratio=np.array(list(dur_ratio.values())),
         ref_bpm=ref.bpm, mean_bpm=timing.mean_bpm, tempo_cv=timing.tempo_cv,
-        pauses=timing.pauses, velocity_std=vstd, velocity_range=vrange,
+        pauses=pauses, velocity_std=vstd, velocity_range=vrange,
         velocity_flat=(vstd is None or vstd < cfg.flat_velocity_std), notes=notes_log,
+        n_replayed=counts["replayed"], restarts=restarts,
     )
