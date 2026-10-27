@@ -31,7 +31,7 @@ def clean_notes(notes: list[PerfNote], min_duration_s: float = 0.03) -> list[Per
 
 
 def list_transcribers() -> list[str]:
-    return ["transkun", "basic-pitch", "ground-truth"]
+    return ["transkun", "hft", "kong", "basic-pitch", "ground-truth"]
 
 
 def get_transcriber(name: str, **kwargs) -> Transcriber:
@@ -39,6 +39,14 @@ def get_transcriber(name: str, **kwargs) -> Transcriber:
         from .transkun_adapter import TranskunTranscriber
 
         return TranskunTranscriber(**kwargs)
+    if name == "hft":
+        from .hft_adapter import HftTranscriber
+
+        return HftTranscriber(**kwargs)
+    if name == "kong":
+        from .kong_adapter import KongTranscriber
+
+        return KongTranscriber(**kwargs)
     if name == "basic-pitch":
         from .basicpitch_adapter import BasicPitchTranscriber
 

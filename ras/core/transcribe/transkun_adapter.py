@@ -25,6 +25,7 @@ class TranskunTranscriber:
         except ImportError as exc:  # pragma: no cover
             raise TranscriberUnavailable("install the extra: pip install -e '.[transkun]'") from exc
         pre = Path(transkun.__file__).parent / "pretrained"
+        weight = weight or os.environ.get("RAS_TRANSKUN_WEIGHT")  # a fine-tuned model (ras finetune export)
         self._weight = Path(weight) if weight else pre / "2.0.pt"
         self._conf = Path(conf) if conf else pre / "2.0.conf"
         device = device or os.environ.get("RAS_DEVICE", "auto")  # cpu | cuda | cuda:N | auto
@@ -55,7 +56,7 @@ class TranskunTranscriber:
         torch.set_grad_enabled(False)
         manager = moduleconf.parseFromFile(str(self._conf))
         model = manager["Model"].module.TransKun(conf=manager["Model"].config).to(self._device)
-        ckpt = torch.load(str(self._weight), map_location=self._device)
+        ckpt = torch.load(str(self._weight), map_location=self._device, weights_only=True)
         key = "best_state_dict" if "best_state_dict" in ckpt else "state_dict"
         model.load_state_dict(ckpt[key], strict=False)
         model.eval()

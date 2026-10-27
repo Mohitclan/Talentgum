@@ -24,6 +24,9 @@ dependencies = [
 transkun = ["torch", "transkun"]
 service = ["fastapi", "uvicorn[standard]", "sqlalchemy>=2", "python-multipart", "httpx"]
 aws = ["boto3", "psycopg[binary]>=3.1"]
+# optional open-source models (weights via `ras models download`): Kong's pedal model needs these;
+# hFT-Transformer and the dynamics model only need torch/torchaudio from the transkun extra
+models = ["piano_transcription_inference==0.0.6", "torchlibrosa==0.1.0"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]

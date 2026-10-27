@@ -78,19 +78,33 @@ class Analysis:
     pedal_supported: bool = False
     pedal_events: int = 0
     pedal_down_share: float | None = None  # share of the performance time with the sustain pedal down
+    n_unconfirmed_extra: int = 0  # extra notes a second transcriber did not hear: not held against the student
+    extras: dict = field(default_factory=dict)  # expression, chord, order and rhythm measures (ras.core.expression)
+    beat_to_sec: object = None  # score beat -> performance seconds (the timing map); not serialised
 
     @property
     def n_scored(self) -> int:
         """Score notes whose outcome is known."""
         return self.n_ref - self.n_uncertain
 
+    _COUNT = {"missing": "n_missing", "wrong_pitch": "n_wrong_pitch", "wrong_octave": "n_wrong_octave"}
+
     def mark_uncertain(self, result_indices: list[int]) -> None:
+        """Missing or wrong notes whose outcome we cannot be sure of: not held against the student."""
         for i in result_indices:
             r = self.results[i]
-            if r.status == "missing":
+            if r.status in self._COUNT:
+                setattr(self, self._COUNT[r.status], getattr(self, self._COUNT[r.status]) - 1)
                 r.status = "uncertain"
-                self.n_missing -= 1
                 self.n_uncertain += 1
+
+    def mark_unconfirmed_extra(self, result_indices: list[int]) -> None:
+        for i in result_indices:
+            r = self.results[i]
+            if r.status == "extra":
+                r.status = "unconfirmed_extra"
+                self.n_extra -= 1
+                self.n_unconfirmed_extra += 1
 
     @property
     def coverage(self) -> float:
@@ -106,7 +120,7 @@ class Analysis:
     _SNAPSHOT = ("n_ref", "n_perf", "n_correct", "n_wrong_pitch", "n_wrong_octave", "n_missing", "n_extra",
                  "n_optional_played", "chords_total", "chords_correct", "ref_bpm", "mean_bpm", "tempo_cv", "pauses",
                  "velocity_std", "velocity_range", "velocity_flat", "n_uncertain", "n_replayed", "restarts",
-                 "pedal_supported", "pedal_events", "pedal_down_share")
+                 "pedal_supported", "pedal_events", "pedal_down_share", "n_unconfirmed_extra", "extras")
 
     def scoring_inputs(self) -> dict:
         """Everything the rubric engine reads, so results can be re-scored later without the audio."""
@@ -131,6 +145,7 @@ class Analysis:
             "missing": self.n_missing,
             "uncertain": self.n_uncertain,
             "extra": self.n_extra,
+            "unconfirmed_extra": self.n_unconfirmed_extra,
             "chords_total": self.chords_total,
             "chords_correct": self.chords_correct,
             "mean_bpm": self.mean_bpm,
@@ -581,5 +596,5 @@ def analyze(ref: Reference, perf: list[PerfNote], alignment: Alignment,
         ref_bpm=ref.bpm, mean_bpm=timing.mean_bpm, tempo_cv=timing.tempo_cv,
         pauses=pauses, velocity_std=vstd, velocity_range=vrange,
         velocity_flat=(vstd is None or vstd < cfg.flat_velocity_std), notes=notes_log,
-        n_replayed=counts["replayed"], restarts=restarts,
+        n_replayed=counts["replayed"], restarts=restarts, beat_to_sec=exp_sec,
     )

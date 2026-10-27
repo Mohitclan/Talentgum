@@ -17,5 +17,17 @@ Engineering assessment, not legal advice: confirm with counsel before distributi
 | certifi | MPL-2.0 | CA bundle, unmodified | OK: file-level copyleft only applies to modified files |
 | tqdm | MPL-2.0 AND MIT | progress bars (pulled in by Transkun) | OK, unmodified |
 
-No AGPL, SSPL or non-commercial licences are present. Re-run `ras sbom` inside the image after any
+## Optional assessment models (`ras models download`)
+
+| Component | Licence | Use | Decision |
+|---|---|---|---|
+| hFT-Transformer code and MAESTRO weights (Sony) | MIT | second transcriber that withdraws doubtful error claims | OK. The model code is vendored in `ras/models/vendor/hft_model.py` with its notice. |
+| Kong et al. transcription (`piano_transcription_inference`, `torchlibrosa`) and Zenodo weights | MIT | pedal source and optional third transcription | OK. Its loader is not used, because it fully unpickles and shells out to wget; RAS loads the weights with `weights_only=True`. |
+| piano-dynamic-estimation code and weights (He et al.) | MIT | audio dynamics (pp..ff) | OK, with a note. The upstream encoder is "adapted from GuzhengTech99", which ships no licence file. The adapted code is the upstream authors' MIT release; ask them to confirm before distributing the image. |
+| Polytune (AAAI 2025 student-mistake detector) | BSD-3 **with a non-commercial restriction** | not used | Rejected: cannot be used for a paid client service. |
+
+Downloaded checkpoints are never unpickled freely: whole-module pickles go through an allow-list loader
+(`ras/models/safe_load.py`) and are converted to plain state dicts at download time.
+
+No AGPL, SSPL or non-commercial licences are present in what ships. Re-run `ras sbom` inside the image after any
 dependency change and add new flagged rows here.

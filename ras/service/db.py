@@ -111,6 +111,19 @@ class RubricRow(Base):
     created_at: Mapped[dt.datetime] = mapped_column(default=now)
 
 
+class TeacherProfile(Base):
+    """How teachers play one reference version (ras.core.profile); the newest one is used for students."""
+
+    __tablename__ = "teacher_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), index=True)
+    song_id: Mapped[str] = mapped_column(String(64), index=True)
+    reference_version: Mapped[int] = mapped_column(Integer)
+    assessment_ids: Mapped[list] = mapped_column(JSON, default=list)
+    profile: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[dt.datetime] = mapped_column(default=now)
+
+
 class Assessment(Base):
     __tablename__ = "assessments"
     __table_args__ = (UniqueConstraint("tenant_id", "idempotency_key"),)

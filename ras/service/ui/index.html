@@ -110,7 +110,7 @@ function legend() { return h('div', { class: 'legend' }, LEGEND.map(([c, t]) => 
 function scoreView(notes, editable, edits) {
   const byMeasure = new Map(); const extras = [];
   for (const n of notes) {
-    if (n.status === 'extra') { extras.push(n); continue; }
+    if (n.ref_index == null) { extras.push(n); continue; }  // extra, replayed or unconfirmed_extra
     if (!byMeasure.has(n.measure)) byMeasure.set(n.measure, []);
     byMeasure.get(n.measure).push(n);
   }
@@ -141,7 +141,9 @@ function scoreView(notes, editable, edits) {
   });
   if (extras.length) wrap.append(h('div', { class: 'measure' }, h('span', { class: 'no' }, 'Extra'),
     h('div', { class: 'chips' }, extras.sort((a, b) => a.perf_onset_s - b.perf_onset_s).map((n) =>
-      h('span', { class: 'chip extra', title: 'at ' + n.perf_onset_s.toFixed(1) + ' s' }, noteName(n.perf_pitch) + ' @' + n.perf_onset_s.toFixed(1) + 's')))));
+      h('span', { class: 'chip ' + (n.status === 'extra' ? 'extra' : 'uncertain'),
+        title: (n.status === 'extra' ? '' : n.status.replace('_', ' ') + ', not counted · ') + 'at ' + n.perf_onset_s.toFixed(1) + ' s' },
+        noteName(n.perf_pitch) + ' @' + n.perf_onset_s.toFixed(1) + 's')))));
   return wrap;
 }
 
@@ -165,7 +167,8 @@ function resultView(a, notes, extra) {
   if (crit.length) box.append(h('h2', { style: 'margin-top:16px' }, 'Scores by criterion'), h('div', { class: 'bars' }, crit.map(([id, c]) =>
     h('div', { class: 'bar' }, h('span', {}, id.replace(/_/g, ' ')),
       h('div', { class: 'track' }, c.score == null ? null : h('div', { class: 'fill', style: 'width:' + c.score + '%' })),
-      h('span', { class: 'muted' }, c.score == null ? 'not assessed' : Math.round(c.score))))));
+      h('span', { class: 'muted', title: c.reason ? c.reason.replace(/_/g, ' ') : c.metric },
+        c.score == null ? 'not assessed' : Math.round(c.score))))));
   const s = a.summary || {};
   box.append(h('p', { class: 'muted', style: 'margin-top:12px' },
     `${s.correct ?? 0} correct · ${s.wrong_pitch ?? 0} wrong · ${s.wrong_octave ?? 0} octave · ${s.missing ?? 0} missing · ${s.uncertain ?? 0} not sure · ${s.extra ?? 0} extra · tempo ${s.mean_bpm ? Math.round(s.mean_bpm) : '?'} bpm · ${s.pause_count ?? 0} pauses`));

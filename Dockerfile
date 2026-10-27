@@ -16,10 +16,15 @@ WORKDIR /src
 # the large, rarely changing layer first so code edits rebuild in seconds
 RUN pip install "torch==${TORCH_VERSION}" "torchaudio==${TORCHAUDIO_VERSION}" --index-url "${TORCH_INDEX}"
 COPY pyproject.toml README.md ./
-RUN mkdir ras && touch ras/__init__.py && pip install ".[transkun,service,aws]" && pip uninstall -y ras \
+RUN mkdir ras && touch ras/__init__.py && pip install ".[transkun,service,aws,models]" && pip uninstall -y ras \
     && rm -rf ras build *.egg-info
 COPY ras ./ras
 RUN pip install --no-deps . && python -c "import ras, ras.pipeline; print('ras', ras.__version__)"
+# optional open-source models baked into the image (checksum-verified): "hft dynamics" by default (27 MB),
+# add "kong" (164 MB) when a rubric uses pedal_source kong/agree; "" for none
+ARG DOWNLOAD_MODELS="hft dynamics"
+RUN mkdir -p /opt/models && if [ -n "${DOWNLOAD_MODELS}" ]; then \
+      RAS_MODELS_DIR=/opt/models ras models download ${DOWNLOAD_MODELS}; fi
 
 FROM python:${PYTHON}-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
@@ -27,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfi
     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin ras \
     && mkdir -p /data && chown ras /data
 COPY --from=build /opt/venv /opt/venv
-ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 RAS_DATA_DIR=/data MPLCONFIGDIR=/tmp/mpl
+COPY --from=build /opt/models /opt/models
+ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 RAS_DATA_DIR=/data MPLCONFIGDIR=/tmp/mpl RAS_MODELS_DIR=/opt/models
 WORKDIR /app
 USER ras
 EXPOSE 8000

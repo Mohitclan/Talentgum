@@ -28,3 +28,7 @@ data/service/
 *.tfvars
 !*.tfvars.example
 .terraform.lock.hcl.bak
+
+# downloaded model weights (ras models download)
+models/*
+!models/README.md

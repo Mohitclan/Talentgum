@@ -208,3 +208,27 @@ def test_completion_triggers_signed_webhook(env):
 def test_ui_is_served(env):
     r = env.client.get("/ui/")
     assert r.status_code == 200 and "Recording Assessment" in r.text
+
+
+def test_teacher_profile_is_used_for_later_students(env):
+    ids = []
+    for k in range(2):  # two teacher recordings
+        truth, fid = env.recording(name=f"teacher{k}")
+        env.tr.set_notes(truth.notes)
+        ids.append(env.submit(fid, student_id=f"teacher:{k}").json()["assessment_id"])
+        env.worker.run_once()
+    r = env.client.post("/v1/songs/twinkle/teacher-profile", json={"assessment_ids": ids})
+    assert r.status_code == 201, r.text
+    assert r.json()["recordings"] == 2 and r.json()["reference_version"] == 1
+    assert env.client.get("/v1/songs/twinkle/teacher-profile").json()["id"] == r.json()["id"]
+
+    truth, fid = env.recording(name="student")
+    env.tr.set_notes(truth.notes)
+    asm = env.submit(fid).json()["assessment_id"]
+    env.worker.run_once()
+    with env.app.state.Session() as db:
+        teacher = db.get(Assessment, asm).result["scoring_inputs"]["extras"]["teacher"]
+    assert teacher["recordings"] == 2 and teacher["duration_within_pct"] is not None
+
+    bad = env.client.post("/v1/songs/twinkle/teacher-profile", json={"assessment_ids": ["asm_nope"]})
+    assert bad.status_code == 404 and bad.headers["content-type"].startswith("application/problem+json")

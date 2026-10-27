@@ -23,11 +23,13 @@ def assess(
     audio: Path = typer.Argument(..., exists=True, help="Student recording (any ffmpeg format)"),
     rubric: Path = typer.Option(DEFAULT_RUBRIC, help="Rubric JSON"),
     start_s: Optional[float] = typer.Option(None, help="Start timestamp in seconds"),
-    transcriber: str = typer.Option("transkun", help="transkun | basic-pitch"),
+    transcriber: str = typer.Option("transkun", help="transkun | hft | kong | basic-pitch"),
+    profile: Optional[Path] = typer.Option(None, exists=True, help="Teacher benchmark profile (ras profile build)"),
     out: Optional[Path] = typer.Option(None, help="Write the full result JSON here"),
     midi_out: Optional[Path] = typer.Option(None, help="Write the transcribed performance as MIDI"),
 ):
     """Assess one recording against a reference and print a summary."""
+    from ras.core.profile import load_profile
     from ras.core.transcribe import get_transcriber
     from ras.pipeline import assess as run_assess
 
@@ -45,7 +47,8 @@ def assess(
 
         tr = _Keep()
     with console.status("Assessing ..."):
-        res = run_assess(reference, audio, load_rubric(rubric), tr, start_s=start_s)
+        res = run_assess(reference, audio, load_rubric(rubric), tr, start_s=start_s,
+                         profile=load_profile(profile) if profile else None)
 
     if res.status != "completed" and not res.summary:
         console.print(f"[red]{res.status}[/red]: {res.error_code} {res.error_detail or ''}")
@@ -59,6 +62,13 @@ def assess(
             v = s.get(k)
             table.add_row(k, f"{v:.1f}" if isinstance(v, float) else str(v))
         console.print(table)
+        crit = Table(title="Criteria")
+        for col in ("criterion", "metric", "value", "score", "note"):
+            crit.add_column(col)
+        for cid, c in res.scoring.get("criteria", {}).items():
+            crit.add_row(cid, c["metric"], "" if c["value"] is None else f"{c['value']:.1f}",
+                         "-" if c["score"] is None else f"{c['score']:.0f}", c.get("reason", ""))
+        console.print(crit)
         console.print(f"Total score: [bold]{res.scoring.get('total_score')}[/bold] "
                       f"({res.scoring.get('band')})   confidence {res.confidence['value']}"
                       f"{'  [yellow]NEEDS REVIEW[/yellow]' if res.confidence['needs_review'] else ''}")
@@ -301,6 +311,154 @@ def purge_audio(
     with _session(data_dir)() as db:
         n = svc.purge_audio(db, make_store(Settings(data_dir=data_dir)), older_than_days, tenant)
     console.print(f"{n} recording(s) deleted")
+
+
+models_app = typer.Typer(help="Optional open-source models (second transcriber, pedal, dynamics)",
+                         no_args_is_help=True)
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def models_list():
+    """What each model does, its licence, which criteria use it, and whether it is downloaded."""
+    from ras.models import models_dir, status
+
+    t = Table(title=f"Models in {models_dir()}")
+    for col in ("name", "available", "MB", "licence", "criteria", "role"):
+        t.add_column(col)
+    for s in status():
+        t.add_row(s["name"], "yes" if s["available"] else "no", str(s["size_mb"]), s["licence"],
+                  ", ".join(s["criteria"]), s["role"])
+    console.print(t)
+
+
+@models_app.command("download")
+def models_download(
+    names: list[str] = typer.Argument(None, help="hft, kong, dynamics (default: all)"),
+):
+    """Download, checksum-verify and convert model weights into RAS_MODELS_DIR (default ./models)."""
+    from ras.models import MODELS, download
+
+    for name in names or list(MODELS):
+        if name not in MODELS:
+            raise typer.BadParameter(f"unknown model {name!r}; available: {', '.join(MODELS)}")
+        with console.status(f"Downloading {name} (~{MODELS[name].size_mb} MB) ..."):
+            path = download(name)
+        console.print(f"{name}: {path}")
+
+
+@app.command()
+def criteria():
+    """TalentGum's criteria, the metric that scores each, the models it uses and what limits it."""
+    from ras.core.criteria import CRITERIA
+
+    t = Table(title="Client criteria -> measurement")
+    for col in ("group", "criterion", "metric (fallback)", "models", "readiness", "limits"):
+        t.add_column(col)
+    for c in CRITERIA:
+        t.add_row(c.group, c.label, c.metric + (f" ({c.fallback})" if c.fallback else ""), ", ".join(c.models),
+                  ", ".join(c.readiness), c.limits)
+    console.print(t)
+
+
+profile_app = typer.Typer(help="Teacher benchmark profiles per song", no_args_is_help=True)
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("build")
+def profile_build(
+    reference: Path = typer.Argument(..., exists=True, help="The song's MusicXML/MIDI"),
+    audio: list[Path] = typer.Argument(..., exists=True, help="Two or more teacher recordings of the song"),
+    out: Path = typer.Option(..., help="Profile JSON to write"),
+    rubric: Path = typer.Option(DEFAULT_RUBRIC.parent / "talentgum_criteria_v1.json"),
+    transcriber: str = typer.Option("transkun"),
+):
+    """Assess the teachers' recordings and pool them into the profile students are compared with."""
+    from ras.core.profile import build_profile
+    from ras.core.score.reference import load_reference
+    from ras.core.transcribe import get_transcriber
+    from ras.pipeline import assess as run_assess
+
+    ref, rb, tr = load_reference(reference), load_rubric(rubric), get_transcriber(transcriber)
+    inputs = []
+    for a in audio:
+        with console.status(f"Assessing {a.name} ..."):
+            res = run_assess(ref, a, rb, tr)
+        if res.status != "completed":
+            console.print(f"[red]{a.name}: {res.error_code}[/red] (skipped)")
+            continue
+        inputs.append(res.scoring_inputs)
+        console.print(f"{a.name}: {res.summary.get('correct')}/{res.summary.get('score_notes')} notes matched, "
+                      f"{res.summary.get('mean_bpm') or 0:.0f} bpm")
+    if not inputs:
+        raise typer.Exit(1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(build_profile(inputs, ref.sha256), indent=1))
+    console.print(f"Profile from {len(inputs)} recording(s) written to {out}")
+
+
+@app.command()
+def calibrate(
+    grades: Path = typer.Argument(..., exists=True, help="CSV: result, <criterion ids...>, overall"),
+    rubric: Path = typer.Option(..., exists=True, help="Rubric to start from"),
+    out: Path = typer.Option(..., help="Calibrated rubric JSON to write"),
+    scale: float = typer.Option(100.0, help="Grade scale in the CSV (100, or 5 for 1-5 grades)"),
+):
+    """Fit each criterion's thresholds (and, with overall grades, the weights) to teacher grades."""
+    from ras.eval.calibrate import calibrate as run_cal
+
+    new, report = run_cal(load_rubric(rubric), grades, scale)
+    out.write_text(json.dumps(new, indent=1))
+    for cid, info in report["criteria"].items():
+        console.print(f"  {cid}: {info}")
+    console.print(f"weights: {report['weights']}. Rubric v{new['version']} written to {out}")
+
+
+finetune_app = typer.Typer(help="Fine-tune Transkun on TalentGum recordings (GPU)", no_args_is_help=True)
+app.add_typer(finetune_app, name="finetune")
+
+
+@finetune_app.command("prepare")
+def finetune_prepare(
+    items: Path = typer.Argument(..., exists=True,
+                                 help='JSON list: [{"reference", "audio", "start_s", "split", "removed_ref_indices"}]'),
+    out: Path = typer.Option(Path("data/finetune"), help="Dataset directory"),
+    n_iter: int = typer.Option(20000, help="Training iterations"),
+    max_lr: float = typer.Option(2e-5, help="Peak learning rate (small: this continues a trained model)"),
+):
+    """Label teacher/reviewed recordings via score alignment, write Transkun's dataset and a start checkpoint."""
+    from ras.core.transcribe import get_transcriber
+    from ras.eval import finetune as ft
+
+    base = Path(items).parent
+    entries = json.loads(Path(items).read_text())
+    for e in entries:
+        for k in ("reference", "audio"):
+            e[k] = str((base / e[k]) if not Path(e[k]).is_absolute() else e[k])
+    rb = load_rubric(DEFAULT_RUBRIC)
+    with console.status("Aligning and labelling ..."):
+        summary = ft.prepare(entries, out, get_transcriber("transkun"), rb)
+    console.print(summary)
+    if not summary["train"] or not summary["validation"]:
+        console.print("[yellow]Need at least one train and one validation recording.[/yellow]")
+        raise typer.Exit(1)
+    ft.build_pickles(out)
+    ckpt = ft.init_checkpoint(out / "checkpoint.pt", n_iter, max_lr)
+    console.print("Train on a GPU machine with:")
+    console.print(ft.train_command(out, ckpt, n_iter, max_lr))
+    console.print(f"Then: ras finetune export {ckpt} --out transkun_talentgum.pt; set RAS_TRANSKUN_WEIGHT to it.")
+
+
+@finetune_app.command("export")
+def finetune_export(
+    checkpoint: Path = typer.Argument(..., exists=True),
+    out: Path = typer.Option(..., help="Weights file for RAS_TRANSKUN_WEIGHT"),
+):
+    """Turn the training checkpoint into weights the Transkun adapter loads."""
+    from ras.eval.finetune import export_weights
+
+    console.print(f"Written {export_weights(checkpoint, out)}. Benchmark it before switching: "
+                  "ras benchmark --models transkun (with and without RAS_TRANSKUN_WEIGHT).")
 
 
 @app.command()

@@ -163,14 +163,27 @@ Switch `worker_mode = "gpu"` only if a measured GPU run gives a cost or latency 
    with the Fargate CPU worker (2 vCPU, 4 GB) at its measured speed. Choose GPU if it is cheaper at
    expected volume, or if the turnaround target needs it.
 
-## 4. Fine-tuning: a gate, not a build
+## 4. Fine-tuning: tooling ready, run only when the data says so
 
-No model is trained. Fine-tuning Transkun is worth considering only if teacher reviews (`ras evaluate`)
-show a **systematic** transcription error on real recordings, for example one keyboard model's timbre
-or a phone microphone. Isolated mistakes do not count. Prerequisites:
-- At least a few hours of reviewed recordings with note-level corrections.
+Fine-tuning Transkun is worth it only if teacher reviews (`ras evaluate`) show a **systematic**
+transcription error on real recordings, for example one keyboard model's timbre or a phone
+microphone. Isolated mistakes do not count. Prerequisites:
+- At least a few hours of teacher or reviewed recordings.
 - A held-out set of students (`ras.eval.splits`).
-- A GPU account.
+- A GPU.
+
+There is no MIDI for these recordings, so `ras finetune prepare items.json --out data/finetune` builds
+labels another way:
+- Each recording is aligned to its score.
+- A teacher recording is taken as a correct performance; a reviewed recording uses the teacher's
+  corrections.
+- It writes Transkun's dataset files and a start checkpoint holding the released V2 weights, then
+  prints the training command (`python -m transkun.train ... --max_lr 2e-5 --augment`).
+
+Then:
+1. Run `ras finetune export checkpoint.pt --out transkun_talentgum.pt`.
+2. Benchmark it against the released model on held-out students.
+3. Only if it is better, set `RAS_TRANSKUN_WEIGHT=/path/transkun_talentgum.pt` on the workers.
 
 ## 5. Licence register and SBOM
 

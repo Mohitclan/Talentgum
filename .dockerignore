@@ -18,3 +18,4 @@ infra
 *.onnx
 *.sf2
 .env
+models

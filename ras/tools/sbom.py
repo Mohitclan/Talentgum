@@ -21,6 +21,13 @@ NON_PIP = [  # bundled or system components that pip metadata does not cover
      "note": "pretrained weights shipped inside the transkun package (Yan & Duan, 2024)"},
     {"name": "ffmpeg", "version": "system", "license": "LGPL-2.1-or-later / GPL-2.0-or-later (build dependent)",
      "note": "invoked as a separate program, not linked; Debian's build enables GPL parts"},
+    # optional models (ras models download); vendored model code lives in ras/models/vendor
+    {"name": "hft-transformer-weights", "version": "ismir2023-016_003", "license": "MIT",
+     "note": "Sony hFT-Transformer, MAESTRO v3 checkpoint; model code vendored in ras/models/vendor/hft_model.py"},
+    {"name": "kong-piano-transcription-weights", "version": "note_F1=0.9677_pedal_F1=0.9186", "license": "MIT",
+     "note": "ByteDance high-resolution transcription with pedals, Zenodo record 4034264"},
+    {"name": "piano-dynamic-estimation-weights", "version": "3beac7a2-fold0-e96", "license": "MIT",
+     "note": "He et al. ICASSP 2026; encoder adapted upstream from GuzhengTech99 (no licence file): see DECISIONS.md"},
 ]
 
 

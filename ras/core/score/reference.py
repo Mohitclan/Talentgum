@@ -19,8 +19,18 @@ REF_DTYPE = [
     ("measure", "i4"),
     ("beat_in_measure", "f8"),  # 1-based, quarter-note units
     ("voice", "i4"),
+    ("artic", "i4"),  # bit flags, see ARTIC_*
+    ("dyn", "f8"),  # dynamics level of the marking in force (1 = pp .. 5 = ff), NaN if none
 ]
 DEFAULT_BPM = 100.0
+
+ARTIC_STACCATO, ARTIC_STACCATISSIMO, ARTIC_TENUTO, ARTIC_ACCENT, ARTIC_LEGATO = 1, 2, 4, 8, 16
+_ARTIC_NAMES = {"staccato": ARTIC_STACCATO, "staccatissimo": ARTIC_STACCATISSIMO, "spiccato": ARTIC_STACCATISSIMO,
+                "tenuto": ARTIC_TENUTO, "accent": ARTIC_ACCENT, "strong-accent": ARTIC_ACCENT,
+                "detached-legato": ARTIC_TENUTO}
+# 5-level scale of the dynamics model (ras.core.dynamics_model)
+DYN_LEVEL = {"ppp": 1.0, "pp": 1.0, "p": 2.0, "mp": 2.5, "mf": 3.0, "f": 4.0, "ff": 5.0, "fff": 5.0,
+             "sf": 4.0, "sfz": 4.0, "fp": 4.0}
 
 
 @dataclass
@@ -32,6 +42,17 @@ class Reference:
     source: str
     n_measures: int
     warnings: list[str] = field(default_factory=list)
+    # performance marks, in quarter-note beats: sustain pedal spans and hairpins (cresc./dim.)
+    pedal_spans: list[tuple[float, float]] = field(default_factory=list)
+    hairpins: list[dict] = field(default_factory=list)
+
+    @property
+    def has_articulation_marks(self) -> bool:
+        return bool(len(self.notes) and (self.notes["artic"] != 0).any())
+
+    @property
+    def has_dynamics_marks(self) -> bool:
+        return bool(len(self.notes) and (~np.isnan(self.notes["dyn"])).any()) or bool(self.hairpins)
 
     @property
     def n_notes(self) -> int:
@@ -70,6 +91,7 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
         warnings.simplefilter("ignore")
         score = pt.load_musicxml(str(path))
         part = pt.score.merge_parts(score.parts) if len(score.parts) > 1 else score.parts[0]
+        _tag_slurs(pt, part)  # before unfolding, which drops slurs (note attributes survive it)
         if unfold_repeats:
             try:
                 part = pt.score.unfold_part_maximal(part)
@@ -78,6 +100,7 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
         na = part.note_array(include_metrical_position=True)
         tempi = list(part.iter_all(pt.score.Tempo))
         measures = part.measure_number_map(na["onset_div"]) if len(na) else []
+        marks = _performance_marks(pt, part, na)
 
     # tempo map: (start in quarters, seconds per quarter), applied piecewise to every note
     if bpm is not None or not tempi:
@@ -110,11 +133,59 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
         rows.append((
             "", int(n["pitch"]), on, du, to_sec(on), to_sec(on + du) - to_sec(on),
             int(measures[i]), float(n["rel_onset_div"]) / divs + 1.0, int(n["voice"]),
+            marks["artic"][i], marks["dyn"][i],
         ))
     ref = _finish(rows, bpm, _sha256(path), "musicxml", warns)
+    ref.pedal_spans, ref.hairpins = marks["pedal"], marks["hairpins"]
     if len(ref.optional):
         ref.warnings.append(f"{len(ref.optional)}_optional_notes_ignored")
     return ref
+
+
+def _tag_slurs(pt, part) -> None:
+    """Mark every note under a slur (same voice), except the slur's last note, which is released."""
+    notes = list(part.notes_tied)
+    for slur in part.iter_all(pt.score.Slur):
+        s, e = getattr(slur, "start_note", None), getattr(slur, "end_note", None)
+        if s is None or e is None:
+            continue
+        for n in notes:
+            if s.start.t <= n.start.t < e.start.t and n.voice == s.voice:
+                n.ras_legato = True
+
+
+def _performance_marks(pt, part, na) -> dict:
+    """Articulations, slurs, dynamics markings, hairpins and pedal marks, aligned with the note array."""
+    # MusicXML exports rarely carry note ids, so rows are matched to notes by position, pitch and voice
+    by_key = {(n.start.t, n.midi_pitch, n.voice): n for n in part.notes_tied}
+    onset_div = na["onset_div"]
+    artic = np.zeros(len(na), dtype=int)
+    for i, row in enumerate(na):
+        note = by_key.get((int(row["onset_div"]), int(row["pitch"]), int(row["voice"])))
+        if note is None:
+            continue
+        for a in (getattr(note, "articulations", None) or []):
+            artic[i] |= _ARTIC_NAMES.get(str(a), 0)
+        if getattr(note, "ras_legato", False):
+            artic[i] |= ARTIC_LEGATO
+
+    dyn = np.full(len(na), np.nan)
+    hairpins: list[dict] = []
+    for d in sorted(part.iter_all(pt.score.LoudnessDirection, include_subclasses=True), key=lambda x: x.start.t):
+        if isinstance(d, (pt.score.IncreasingLoudnessDirection, pt.score.DecreasingLoudnessDirection)):
+            if d.end is not None:
+                hairpins.append({"kind": "cresc" if isinstance(d, pt.score.IncreasingLoudnessDirection) else "dim",
+                                 "start_beat": float(part.quarter_map(d.start.t)),
+                                 "end_beat": float(part.quarter_map(d.end.t))})
+            continue
+        level = DYN_LEVEL.get(str(getattr(d, "text", "")).strip().lower())
+        if level is None:
+            continue
+        end = d.end.t if d.end is not None else np.inf
+        dyn[(onset_div >= d.start.t) & (onset_div < end)] = level
+    pedal = [(float(part.quarter_map(p.start.t)), float(part.quarter_map(p.end.t)))
+             for p in part.iter_all(pt.score.SustainPedalDirection) if p.end is not None]
+    return {"artic": artic.tolist(), "dyn": dyn.tolist(), "pedal": pedal, "hairpins": hairpins}
 
 
 def load_midi(path: str | Path, bpm: float | None = None) -> Reference:
@@ -141,7 +212,7 @@ def load_midi(path: str | Path, bpm: float | None = None) -> Reference:
         m_start = downbeats[m - 1] if m >= 1 else 0.0
         rows.append((
             "", n.pitch, beats(n.start), beats(n.end) - beats(n.start), n.start, n.end - n.start,
-            max(m, 1), beats(n.start) - beats(m_start) + 1.0, 1,
+            max(m, 1), beats(n.start) - beats(m_start) + 1.0, 1, 0, np.nan,
         ))
     return _finish(rows, bpm, _sha256(path), "midi", warns)
 

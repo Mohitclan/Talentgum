@@ -16,11 +16,13 @@ from urllib.parse import urlsplit
 
 from ras.core.rubric import Rubric
 from ras.core.score.reference import load_reference
+from ras.models.hub import ModelHub, default_hub
 from ras.pipeline import PipelineConfig, assess
 
 from .config import Settings
 from .db import Assessment, FileRow, Reference, RubricRow, make_session_factory, now
 from .queue import claim_next, fail_or_retry, make_signal
+from .services import latest_teacher_profile
 from .storage import make_store
 
 log = logging.getLogger("ras.worker")
@@ -91,7 +93,8 @@ def default_transcriber_factory(settings: Settings):
 
 class Worker:
     def __init__(self, settings: Settings | None = None, transcriber_factory=None, session_factory=None,
-                 store=None, webhook_post=None, signal=None):
+                 store=None, webhook_post=None, signal=None, hub: ModelHub | None = None):
+        self.hub = hub or default_hub()  # optional models, loaded once when a rubric first needs them
         self.settings = settings or Settings()
         self.settings.check()
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -159,9 +162,11 @@ class Worker:
                                             version=a.rubric_version).one()
         rubric = Rubric.model_validate(rub.body)
         reference = load_reference(self.store.get_path(ref_file.key))
+        prof = latest_teacher_profile(db, a.tenant_id, a.song_id, a.reference_version)
         try:
             result = assess(reference, self.store.get_path(rec_file.key), rubric, self.transcriber,
-                            start_s=a.start_s, config=PipelineConfig())
+                            start_s=a.start_s, config=PipelineConfig(), profile=prof.profile if prof else None,
+                            hub=self.hub)
         finally:
             self.store.release(rec_file.key)
         d = result.model_dump(mode="json")

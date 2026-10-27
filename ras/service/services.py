@@ -19,7 +19,19 @@ from ras.core.errors.analyze import Analysis
 from ras.core.rubric import Rubric, score_analysis
 from ras.core.score.reference import load_reference
 
-from .db import ApiKey, Assessment, AuditLog, FileRow, Reference, Review, RubricRow, Song, Tenant, now
+from .db import (
+    ApiKey,
+    Assessment,
+    AuditLog,
+    FileRow,
+    Reference,
+    Review,
+    RubricRow,
+    Song,
+    TeacherProfile,
+    Tenant,
+    now,
+)
 from .storage import ObjectStore, sha256_bytes
 
 AUDIO_EXT = {".m4a", ".wav", ".mp3", ".flac", ".aac", ".ogg", ".webm", ".opus"}
@@ -189,6 +201,40 @@ def create_song(db: Session, store: ObjectStore, tenant: str, song_id: str, titl
         db.commit()
         raise
     return song, ref
+
+
+def create_teacher_profile(db: Session, tenant: str, song_id: str, assessment_ids: list[str],
+                           actor: str = "local") -> TeacherProfile:
+    """Pool finished assessments of teacher recordings into the song's benchmark profile."""
+    from ras.core.profile import build_profile
+
+    get_song(db, tenant, song_id)
+    if not assessment_ids:
+        raise ServiceError("no_recordings", "give the assessment ids of 2-3 teacher recordings", 422)
+    asms = [get_assessment(db, tenant, i) for i in dict.fromkeys(assessment_ids)]
+    if any(a.song_id != song_id for a in asms):
+        raise ServiceError("wrong_song", "every assessment must be of this song", 422)
+    versions = {a.reference_version for a in asms}
+    if len(versions) != 1:
+        raise ServiceError("mixed_reference_versions", "the recordings were assessed against different "
+                           "reference versions; re-assess them against one version", 422)
+    if any(not a.result or a.status not in ("completed", "review_required", "reviewed") for a in asms):
+        raise ServiceError("not_finished", "every assessment must have finished successfully", 409)
+    version = versions.pop()
+    ref = latest_reference(db, tenant, song_id, version)
+    profile = build_profile([a.result.get("scoring_inputs", {}) for a in asms], ref.sha256)
+    row = TeacherProfile(tenant_id=tenant, song_id=song_id, reference_version=version,
+                         assessment_ids=[a.id for a in asms], profile=profile)
+    db.add(row)
+    db.commit()
+    audit(db, tenant, actor, "teacher_profile.create", song_id, reference_version=version, recordings=len(asms))
+    return row
+
+
+def latest_teacher_profile(db: Session, tenant: str, song_id: str, reference_version: int) -> TeacherProfile | None:
+    return db.execute(select(TeacherProfile).where(
+        TeacherProfile.tenant_id == tenant, TeacherProfile.song_id == song_id,
+        TeacherProfile.reference_version == reference_version).order_by(TeacherProfile.id.desc()).limit(1)).scalar()
 
 
 def latest_reference(db: Session, tenant: str, song_id: str, version: int | None = None) -> Reference:

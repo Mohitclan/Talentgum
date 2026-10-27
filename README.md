@@ -62,6 +62,22 @@ Basic Pitch's old numpy/TensorFlow pins that do not build on Python 3.12.
 `ground-truth` feeds the known notes into the pipeline: it measures the alignment and
 error-detection stages alone, with perfect transcription.
 
+## Client criteria and open-source models
+
+```bash
+.venv/bin/ras criteria                       # TalentGum's 22 criteria -> metric, model, what limits it
+.venv/bin/ras models download                # hFT-Transformer, Kong pedal model, dynamics model (checksummed)
+.venv/bin/ras models list
+.venv/bin/ras assess ref.musicxml take.m4a --rubric data/rubrics/talentgum_criteria_v1.json
+.venv/bin/ras profile build ref.musicxml teacher1.m4a teacher2.m4a --out ref.profile.json
+.venv/bin/ras calibrate grades.csv --rubric data/rubrics/talentgum_criteria_v1.json --out rubric_v2.json
+```
+
+Every criterion on the client's form is scored by `talentgum_criteria_v1.json`. A model is called only
+when a criterion needs it, and a criterion that cannot be measured for a recording (no marks in the
+score, no pedal, a keyboard without velocity, no teacher benchmark) is reported as not assessed, with
+the reason. Details: [docs/CRITERIA.md](docs/CRITERIA.md).
+
 ## Run the service (Phase 2)
 
 ```bash
@@ -103,7 +119,7 @@ AWS deployment, GPU benchmarking and the licence register: [docs/DEPLOY.md](docs
 
 ```bash
 .venv/bin/pytest                    # fast suite, no model needed
-.venv/bin/pytest -m slow            # also runs the real Transkun model
+.venv/bin/pytest -m slow            # also runs Transkun and the downloaded models
 docker compose run --rm tests       # cloud backends: PostgreSQL, S3, SQS (stack must be up)
 ```
 
@@ -112,18 +128,22 @@ docker compose run --rm tests       # cloud backends: PostgreSQL, S3, SQS (stack
 ```
 ras/core/audio       decode, quality gate, level, crop
 ras/core/score       MusicXML/MIDI reference loader
-ras/core/transcribe  Transcriber interface + Transkun / Basic Pitch / ground-truth adapters
+ras/core/transcribe  Transcriber interface + Transkun / hFT / Kong / Basic Pitch / ground-truth adapters
 ras/core/align       transposition detection, group-level DP matcher (and Parangonar)
 ras/core/errors      note assignment, error classes, timing, tempo, pauses, restarts, chords
-ras/core/rubric      rubric model and scoring engine
+ras/core/expression  note order, chord detail, rhythm, hesitations, articulation, dynamics, pedal vs the score
+ras/core/second_opinion, dynamics_model, profile, criteria   second transcriber, audio dynamics,
+                     teacher benchmarks, the client-criteria map
+ras/core/rubric      rubric model and scoring engine (fallback metrics, models_needed)
+ras/models           optional model registry, checksummed download, allow-list loader, vendored model code
 ras/core/confidence  confidence and "needs review"
 ras/core/feedback    template feedback
 ras/pipeline.py      end-to-end assess()
 ras/service          API (FastAPI), worker, queue, DB models, storage, ingest, evaluation, web UI
 ras/synth            songs, MusicXML writer, performance simulator, audio renderer, dataset
-ras/eval             metrics, grouped splits, benchmark harness
+ras/eval             metrics, grouped splits, benchmark harness, rubric calibration, fine-tuning data
 ras/tools/cli.py     `ras` command (ras/tools/sbom.py: licence register)
-data/rubrics         rubric JSON (dev placeholder only)
+data/rubrics         rubric JSON: dev placeholder, and talentgum_criteria_v1 (all client criteria, first-guess weights)
 Dockerfile, docker-compose.yml   one image for API/worker/admin; the local AWS-shaped stack
 infra/terraform      AWS: ECS, RDS, S3, SQS, ALB, alarms, budget, GPU workers (+ offline plan tests)
 scripts/             setup.sh, smoke_stack.py (end-to-end check of a running deployment)
@@ -154,6 +174,11 @@ Full report and interpretation: [docs/benchmarks/phase1_synthetic.md](docs/bench
 * **Restarts** are detected (an abandoned attempt the student plays again is labelled `replayed`, not
   extra; 17 of 20 simulated restarts found, 98.6% of notes still judged correctly). Very short abandoned
   fragments (about 5 notes) can be missed. Skipped bars show as missing notes.
-* hFT-Transformer is not benchmarked (research code, needs a wrapper).
+* hFT-Transformer is wrapped and used as a **second opinion**, not as the main transcriber. It is about
+  as slow as Transkun on CPU, so each recording takes roughly twice as long when it is on.
+* Dynamics, articulation and pedal can only be judged when the MusicXML carries those marks, or when
+  the song has a teacher benchmark. Dynamics also needs a touch-sensitive keyboard, or the audio
+  dynamics model, which was trained on concert piano: validation F1 0.53 on five levels, so it is used
+  only for the direction of change.
 * Transkun runs at roughly real time or slower on this Intel laptop CPU; see the benchmark report
   for measured numbers before choosing a latency target.

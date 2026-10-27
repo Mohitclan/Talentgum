@@ -36,6 +36,16 @@ class ReferenceIn(BaseModel):
     bpm: float | None = None
 
 
+class TeacherProfileIn(BaseModel):
+    assessment_ids: list[str]
+
+
+def profile_view(p) -> dict:
+    return {"id": p.id, "song_id": p.song_id, "reference_version": p.reference_version,
+            "recordings": p.profile.get("recordings"), "assessment_ids": p.assessment_ids,
+            "tempo_bpm": p.profile.get("tempo_bpm"), "created_at": p.created_at.isoformat()}
+
+
 class AssessmentIn(BaseModel):
     song_id: str
     recording_file_id: str
@@ -177,6 +187,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def add_reference(song_id: str, body: ReferenceIn, c: Caller = Depends(caller), db=Depends(db_session)):
         svc.add_reference(db, store, c.tenant, song_id, body.reference_file_id, body.bpm)
         return song_view(db, c.tenant, svc.get_song(db, c.tenant, song_id))
+
+    @app.post("/v1/songs/{song_id}/teacher-profile", status_code=201)
+    def create_teacher_profile(song_id: str, body: TeacherProfileIn, c: Caller = Depends(caller),
+                               db=Depends(db_session)):
+        """Benchmark from finished assessments of 2-3 teacher recordings; later student results compare with it."""
+        return profile_view(svc.create_teacher_profile(db, c.tenant, song_id, body.assessment_ids, actor=c.actor))
+
+    @app.get("/v1/songs/{song_id}/teacher-profile")
+    def get_teacher_profile(song_id: str, reference_version: int | None = None, c: Caller = Depends(caller),
+                            db=Depends(db_session)):
+        version = reference_version or svc.latest_reference(db, c.tenant, song_id).version
+        p = svc.latest_teacher_profile(db, c.tenant, song_id, version)
+        if p is None:
+            raise svc.ServiceError("profile_not_found", f"no teacher profile for {song_id} v{version}", 404)
+        return profile_view(p)
 
     # ---- rubrics
     @app.post("/v1/rubrics", status_code=201)

@@ -12,6 +12,7 @@ import numpy as np
 from pydantic import BaseModel, Field, field_validator
 
 from ras import __version__
+from ras.core import second_opinion
 from ras.core.align import AlignmentError, estimate_transposition, match_notes
 from ras.core.audio.decode import (
     DecodeError,
@@ -23,14 +24,18 @@ from ras.core.audio.decode import (
 )
 from ras.core.confidence import estimate_confidence
 from ras.core.errors import AnalysisConfig, analyze
+from ras.core.expression import measure as measure_expression
 from ras.core.feedback import make_feedback
+from ras.core.profile import compare as compare_profile
 from ras.core.rubric import Rubric, score_analysis
+from ras.core.rubric.engine import models_needed
 from ras.core.score.reference import Reference, load_reference
 from ras.core.transcribe.base import Transcriber
 from ras.core.verify import OnsetEvidence, mark_uncertain_missing
-from ras.types import PerfNote
+from ras.models.hub import ModelHub, default_hub
+from ras.types import PedalEvent, PerfNote
 
-ANALYSIS_VERSION = "analysis-1"
+ANALYSIS_VERSION = "analysis-2"  # 2: expression measures, second opinions, teacher profiles
 
 
 def _py(obj):
@@ -110,15 +115,82 @@ def _sounding_at_start(audio, sr: int, window_s: float = 0.25, ratio: float = 0.
     return bool(head > ratio * np.percentile(rms, 90))
 
 
-def _add_pedal(analysis, tr, notes: list[PerfNote]) -> None:
-    """Sustain-pedal use over the performance (only when the transcriber reports pedal)."""
-    analysis.pedal_supported = bool(tr.supports_pedal)
-    if not tr.supports_pedal or not notes:
+def _add_pedal(analysis, pedal: list[PedalEvent] | None, notes: list[PerfNote]) -> None:
+    """Sustain-pedal use over the performance (`pedal` None: the source cannot detect the pedal)."""
+    analysis.pedal_supported = pedal is not None
+    if pedal is None or not notes:
         return
     lo, hi = min(n.onset for n in notes), max(n.offset for n in notes)
-    analysis.pedal_events = len(tr.pedal)
-    down = sum(max(0.0, min(p.end, hi) - max(p.start, lo)) for p in tr.pedal)
+    analysis.pedal_events = len(pedal)
+    down = sum(max(0.0, min(p.end, hi) - max(p.start, lo)) for p in pedal)
     analysis.pedal_down_share = round(down / (hi - lo), 3) if hi > lo else 0.0
+
+
+def _intersect(a: list[PedalEvent], b: list[PedalEvent]) -> list[PedalEvent]:
+    """Pedal down only where both sources say so."""
+    out = []
+    for x in a:
+        for y in b:
+            s, e = max(x.start, y.start), min(x.end, y.end)
+            if e > s:
+                out.append(PedalEvent(s, e))
+    return out
+
+
+def _shift(notes, applied: int, offset: float) -> list[PerfNote]:
+    return [PerfNote(n.pitch - applied, n.onset + offset, n.offset + offset, n.velocity) for n in notes]
+
+
+def _run_models(res, rubric: Rubric, hub: ModelHub, analysis, ref: Reference, tr, perf: list[PerfNote],
+                audio, sr: int, offset: float, applied: int, profile: dict | None) -> None:
+    """Second opinions, pedal source, audio dynamics and teacher comparison: only what the rubric needs."""
+    used: dict[str, str] = {}
+    so = rubric.options.second_opinion
+    names = [n for n in ("hft", "kong") if hub.available(n)] if so == "auto" else list(so)
+    second_results, kong_tr = [], None
+    for name in names:
+        model = hub.get(name)
+        if model is None:
+            res.warnings.append(f"model_unavailable: {name} ({hub.errors.get(name)})")
+            continue
+        tr2 = model.transcribe(audio, sr)
+        used[name] = tr2.version
+        if name == "kong":
+            kong_tr = tr2
+        second_results.append(second_opinion.apply(
+            analysis, perf, _shift(tr2.notes, applied, offset), name,
+            credit_missing=rubric.options.second_opinion_policy == "credit"))
+
+    pedal = [PedalEvent(p.start + offset, p.end + offset, p.value) for p in tr.pedal] if tr.supports_pedal else None
+    if rubric.options.pedal_source != "primary":
+        if kong_tr is None and (kong := hub.get("kong")) is not None:
+            kong_tr = kong.transcribe(audio, sr)
+            used["kong"] = kong_tr.version
+        if kong_tr is None:
+            res.warnings.append("model_unavailable: kong (pedal_source falls back to the main transcriber)")
+        else:
+            kp = [PedalEvent(p.start + offset, p.end + offset, p.value) for p in kong_tr.pedal]
+            pedal = kp if rubric.options.pedal_source == "kong" else _intersect(pedal or [], kp)
+    _add_pedal(analysis, pedal, perf)
+
+    model_levels = None
+    if "dynamics" in models_needed(rubric, analysis.velocity_flat):
+        est = hub.get("dynamics")
+        if est is None:
+            res.warnings.append(f"model_unavailable: dynamics ({hub.errors.get('dynamics')})")
+        else:
+            model_levels = dict(enumerate(est.levels_at(audio, sr, [n.onset for n in perf], offset)))
+            used["dynamics"] = est.version
+
+    measure_expression(ref, perf, analysis, pedal=pedal, model_levels=model_levels)
+    if profile is not None:
+        if profile.get("reference_sha256") not in (None, ref.sha256):
+            res.warnings.append("teacher_profile_is_for_a_different_score_version_ignored")
+        else:
+            analysis.extras["teacher"] = compare_profile(analysis.extras, profile)
+    if used:
+        res.versions["models"] = used
+    analysis.extras["second_opinion"] = second_results
 
 
 def assess(
@@ -128,8 +200,12 @@ def assess(
     transcriber: Transcriber,
     start_s: float | None = None,
     config: PipelineConfig | None = None,
+    profile: dict | None = None,
+    hub: ModelHub | None = None,
 ) -> AssessmentResult:
+    """`profile`: the song's teacher benchmark (ras.core.profile); `hub`: loaded optional models."""
     cfg = config or PipelineConfig()
+    hub = hub or default_hub()
     t: dict[str, float] = {}
     res = AssessmentResult(assessment_id=f"asm_{uuid.uuid4().hex[:12]}", status="completed")
     res.versions = {"ras": __version__, "analysis": ANALYSIS_VERSION, "commit": _git_commit(),
@@ -220,16 +296,19 @@ def assess(
     analysis = analyze(ref, perf, alignment, AnalysisConfig(
         pause_threshold_s=rubric.options.pause_threshold_s))
     res.warnings += analysis.notes
-    _add_pedal(analysis, tr, notes)
     mark("align_and_analyse", t0)
 
     t0 = time.perf_counter()
-    if cfg.verify_missing and analysis.n_missing:
+    if (cfg.verify_missing or rubric.options.verify_missing_audio) and analysis.n_missing:
         n_unc = mark_uncertain_missing(
             analysis, OnsetEvidence(audio, cfg.sr, offset), cfg.verify_threshold_db, performed=perf)
         if n_unc:
             res.warnings.append(f"{n_unc}_missing_notes_have_audio_evidence_marked_uncertain")
     mark("verify_missing", t0)
+
+    t0 = time.perf_counter()
+    _run_models(res, rubric, hub, analysis, ref, tr, perf, audio, cfg.sr, offset, applied, profile)
+    mark("models_and_expression", t0)
 
     # 5. scoring, confidence, feedback
     t0 = time.perf_counter()
@@ -237,7 +316,13 @@ def assess(
     conf = estimate_confidence(
         analysis, quality.quality_score, rubric.options.review_confidence_threshold,
         start_suspect=start_suspect, transposed_not_allowed=bool(shift and not allowed))
+    disagree = [s for s in analysis.extras.get("second_opinion", []) if s["note_agreement_pct"] < 70]
+    if disagree:  # the transcribers heard different things: a teacher should look
+        conf.value = round(conf.value * 0.85, 3)
+        conf.reasons.append("transcribers_disagree")
+        conf.needs_review = conf.needs_review or conf.value < rubric.options.review_confidence_threshold
     res.summary = _py(analysis.summary())
+    res.summary["second_opinion"] = analysis.extras.get("second_opinion", [])
     res.scoring = _py(scoring.to_dict())
     res.scoring_inputs = _py(analysis.scoring_inputs())
     res.confidence = {"value": conf.value, "needs_review": conf.needs_review, "reasons": conf.reasons}

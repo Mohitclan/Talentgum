@@ -56,4 +56,28 @@ Runbook: [DEPLOY.md](DEPLOY.md).
   * The GPU benchmark run.
   * Database migrations tooling. The schema is created on start; add Alembic before the first schema
     change on a live database.
-  * Fine-tuning. It is a gate (DEPLOY.md §4), not a build.
+  * Fine-tuning runs. The tooling exists (`ras finetune`); training needs a GPU and real recordings.
+
+## Client criteria coverage and open-source models: built, measured on synthetic audio
+Guide: [CRITERIA.md](CRITERIA.md).
+* Every criterion on TalentGum's requirements form (section 6, 22 items) has a metric and a place in
+  `data/rubrics/talentgum_criteria_v1.json`. `ras criteria` prints the map.
+* New deterministic measures: note order, per-chord missing/extra/wrong/voicing, rhythm ratios,
+  hesitations and a fluency index, and tempo against the target. Articulation, dynamics and pedal are
+  checked against the MusicXML marks, which the reference loader now reads (articulations, slurs,
+  dynamics, hairpins, pedal).
+* Open-source models, downloaded with checksums and loaded through an allow-list:
+  * hFT-Transformer as a second transcriber that withdraws doubtful error claims.
+  * Kong's model as a pedal source.
+  * An audio dynamics model for keyboards without velocity.
+
+  Each is called only when a rubric criterion needs it, and a missing model makes its criterion "not
+  assessed".
+* Rubric fallbacks (teacher benchmark first, score second) and a reason for every criterion that is not
+  assessed.
+* Teacher benchmark profiles: `ras profile build`, and `POST /v1/songs/{id}/teacher-profile`, which the
+  worker then uses automatically.
+* Learning from client data without training a network: `ras calibrate` fits thresholds and weights to
+  teacher grades. `ras finetune prepare/export` builds a Transkun fine-tuning set by aligning teacher
+  recordings to the score (there is no MIDI), plus a start checkpoint; training needs a GPU.
+* Not done, needs client data or a decision: see the end of [CRITERIA.md](CRITERIA.md).

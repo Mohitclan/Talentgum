@@ -19,6 +19,42 @@ def _where(r: NoteResult) -> str:
     return f"bar {r.measure}, beat {beat:g}"
 
 
+_LEVEL_NAME = {1.0: "pp", 2.0: "p", 2.5: "mp", 3.0: "mf", 4.0: "f", 5.0: "ff"}
+_ARTIC_TIP = {"staccato": "the staccato notes should be short and bouncy",
+              "tenuto": "hold the tenuto notes for their full length",
+              "legato": "connect the notes under the slur smoothly",
+              "accent": "make the accented note stand out"}
+
+
+def _bar(w: dict) -> str:
+    return f"bar {w['measure']}" if w.get("measure") is not None else "one place"
+
+
+def _expression_issues(x: dict) -> list[tuple[int, str]]:
+    """Order, articulation, dynamics and flow, from ras.core.expression's measures."""
+    out: list[tuple[int, str]] = []
+    where = (x.get("order") or {}).get("where") or []
+    if where:
+        out.append((1, f"In {_bar(where[0])}, two notes came in the wrong order. Play that spot slowly first."))
+    art = (x.get("articulation") or {}).get("issues") or []
+    if art:
+        out.append((2, f"In {_bar(art[0])}, {_ARTIC_TIP.get(art[0]['kind'], 'check the marking')}."))
+    for src in ("velocity", "model"):
+        bad = [d for d in ((x.get("dynamics") or {}).get(src) or {}).get("details", []) if not d["ok"]]
+        if bad:
+            d = bad[0]
+            if "hairpin" in d:
+                way = "louder" if d["hairpin"] == "cresc" else "softer"
+                out.append((2, f"Let the music grow {way} where the score shows a {d['hairpin']}."))
+            else:
+                a, b = _LEVEL_NAME.get(d["from"], "soft"), _LEVEL_NAME.get(d["to"], "loud")
+                out.append((2, f"Make the change from {a} to {b} easier to hear."))
+            break
+    if len((x.get("rhythm") or {}).get("hesitations") or []) >= 2:
+        out.append((2, "There were a few small hesitations. Practising slowly helps the music keep flowing."))
+    return out
+
+
 def make_feedback(analysis: Analysis, ref: Reference, timing_tolerance_ms: float = 120.0,
                   max_items: int = 4) -> list[str]:
     msgs: list[str] = []
@@ -56,6 +92,7 @@ def make_feedback(analysis: Analysis, ref: Reference, timing_tolerance_ms: float
     for p in analysis.pauses[:1]:
         issues.append((2, f"There was a long pause around bar {p['measure']}. "
                           "Try to keep going, even slowly."))
+    issues += _expression_issues(analysis.extras or {})
     issues.sort(key=lambda x: x[0])
     msgs.extend(text for _, text in issues[:max_items])
     if analysis.n_extra >= 3:
