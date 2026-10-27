@@ -1,0 +1,11 @@
+# Copy to staging.tfvars and fill in. Never commit real account details.
+environment        = "staging"
+region             = "ap-south-1"
+vpc_id             = "vpc-0123456789abcdef0"
+public_subnet_ids  = ["subnet-aaaa", "subnet-bbbb"]
+private_subnet_ids = ["subnet-cccc", "subnet-dddd"]
+image_tag          = "2026-10-27-abc1234"
+alert_email        = "ops@example.com"
+monthly_budget_usd = 150
+worker_mode        = "cpu"
+# certificate_arn  = "arn:aws:acm:ap-south-1:111122223333:certificate/..."

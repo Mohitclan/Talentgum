@@ -26,6 +26,34 @@ model comparison is measured locally. See `README.md` and the latest `data/runs/
   roles for teachers (all callers of a tenant are equal), S3/SQS adapters and PostgreSQL in practice (Phase 3),
   model training endpoints (no model is trained in this design).
 
-## Phase 3: AWS and GPU readiness: on hold until an AWS account and GPU exist
-Dockerfiles, S3/SQS adapters, ECS/Fargate definitions, CloudWatch/budget alerts, GPU benchmarking and
-conditional fine-tuning (only if Phase 1/2 show systematic transcription errors), licence and SBOM register.
+## Phase 3: AWS and GPU readiness: built and tested locally; not deployed (no AWS account or GPU yet)
+Runbook: [DEPLOY.md](DEPLOY.md).
+* Cloud backends behind the existing interfaces:
+  * S3 object store with a local read cache, audio objects tagged for lifecycle rules.
+  * SQS as a wake-up signal; the database stays the queue of record.
+  * PostgreSQL with schema creation that is safe when the API and workers start together.
+  * `RAS_DEVICE` (cpu, cuda or auto) for Transkun.
+* One Docker image (CPU, or CUDA through a build argument) for the API, workers and admin tasks. Runs as
+  non-root with a health check. Workers stop cleanly on SIGTERM.
+* `docker compose` runs the AWS shape locally: PostgreSQL, SeaweedFS (S3) and ElasticMQ (SQS). Integration
+  tests run against it, and a smoke script assesses a recording end to end with Transkun.
+* Terraform (`infra/terraform`):
+  * Data and network: VPC inputs, ALB with HTTPS, S3, SQS, RDS PostgreSQL, ECR.
+  * Compute: ECS Fargate for the API and CPU workers, optional EC2 GPU workers that scale from zero,
+    queue-based autoscaling, and a daily retention purge.
+  * Monitoring and access: CloudWatch alarms and dashboard, budget alerts, least-privilege IAM.
+  * Checks: `validate` passes and offline `terraform test` (mocked providers) covers the CPU staging and
+    GPU production plans plus the safety preconditions.
+* Hardening:
+  * Webhooks to internal addresses are refused.
+  * A non-local deployment refuses development defaults.
+  * JSON logs, plus CloudWatch EMF job metrics (count, seconds, real-time factor).
+* GPU benchmarking: the benchmark reports device and peak GPU memory. The run itself needs a GPU.
+* Licence register and CycloneDX SBOM (`ras sbom`), generated from the shipped image.
+* CI workflow: lint, tests, Terraform checks, and the compose integration tests.
+* Not done, needs an account or a decision:
+  * The actual AWS apply.
+  * The GPU benchmark run.
+  * Database migrations tooling. The schema is created on start; add Alembic before the first schema
+    change on a live database.
+  * Fine-tuning. It is a gate (DEPLOY.md §4), not a build.

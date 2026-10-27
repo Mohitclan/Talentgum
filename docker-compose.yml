@@ -1,0 +1,103 @@
+# The AWS deployment shape on one machine: PostgreSQL for RDS, SeaweedFS for S3, ElasticMQ for SQS.
+#   docker compose up -d --build        API + UI on http://127.0.0.1:8088/ui/, one worker
+#   docker compose run --rm tests       integration tests (own database, bucket and queue)
+#   docker compose down -v              stop and delete the local data
+# Credentials below are for these local stand-ins only.
+
+x-ras-env: &ras-env
+  RAS_ENV: local
+  RAS_DB_URL: postgresql+psycopg://ras:ras-local@postgres:5432/ras
+  RAS_STORAGE: s3
+  RAS_S3_BUCKET: ras-local
+  RAS_QUEUE: sqs
+  RAS_SQS_QUEUE_NAME: ras-jobs
+  RAS_CREATE_RESOURCES: "1"
+  RAS_LOG_FORMAT: json
+  RAS_WEBHOOK_SECRET: local-compose-secret
+  RAS_DEVICE: cpu
+  AWS_ACCESS_KEY_ID: ras-local
+  AWS_SECRET_ACCESS_KEY: ras-local-secret
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ENDPOINT_URL_S3: http://s3:8333
+  AWS_ENDPOINT_URL_SQS: http://elasticmq:9324
+
+x-depends: &depends
+  postgres: {condition: service_healthy}
+  s3: {condition: service_healthy}
+  elasticmq: {condition: service_started}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ras
+      POSTGRES_PASSWORD: ras-local
+      POSTGRES_DB: ras
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/local/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ras -d ras"]
+      interval: 3s
+      retries: 20
+
+  s3:  # SeaweedFS, S3-compatible (MinIO images are no longer published)
+    image: chrislusf/seaweedfs:4.50
+    command: server -s3 -dir=/data -ip=s3 -ip.bind=0.0.0.0
+    volumes:
+      - s3data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8333"]
+      interval: 3s
+      retries: 30
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.12
+
+  api:
+    build: .
+    image: ras:local
+    environment:
+      <<: *ras-env
+    command: ["ras", "serve", "--host", "0.0.0.0", "--port", "8000", "--no-with-worker"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8000"
+    volumes:
+      - apidata:/data
+    depends_on: *depends
+
+  worker:
+    image: ras:local
+    environment:
+      <<: *ras-env
+    command: ["ras", "worker"]
+    restart: unless-stopped
+    healthcheck:
+      disable: true  # the image's check is the API's HTTP endpoint; workers serve no HTTP
+    volumes:
+      - workerdata:/data  # transcription cache; objects come from S3
+    stop_grace_period: 120s
+    depends_on:
+      <<: *depends
+      api: {condition: service_healthy}
+
+  tests:
+    build:
+      context: .
+      target: test
+    image: ras:test
+    profiles: ["test"]
+    environment:
+      <<: *ras-env
+      RAS_DB_URL: postgresql+psycopg://ras:ras-local@postgres:5432/ras_test
+      RAS_S3_BUCKET: ras-test
+      RAS_SQS_QUEUE_NAME: ras-test-jobs
+      RAS_LOG_FORMAT: text
+    depends_on: *depends
+
+volumes:
+  pgdata:
+  s3data:
+  apidata:
+  workerdata:

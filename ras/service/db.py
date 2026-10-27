@@ -10,7 +10,19 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    inspect,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DEFAULT_TENANT = "local"
@@ -169,18 +181,21 @@ def make_session_factory(url: str):
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
     if url.startswith("sqlite"):
         kwargs = {"connect_args": {"check_same_thread": False, "timeout": 30}}
+    else:
+        kwargs = {"pool_pre_ping": True}  # survive database failovers and idle-connection reaping
     engine = create_engine(url, **kwargs)
-    insp = inspect(engine)
-    if insp.has_table("assessments") and "tenant_id" not in {c["name"] for c in insp.get_columns("assessments")}:
-        raise SchemaError(f"the database at {url} uses an older schema (before tenants). It holds only local "
-                          "development data: move it aside and start again, or migrate it.")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(engine, expire_on_commit=False)
-    with Session() as db:
-        if db.get(Tenant, DEFAULT_TENANT) is None:
-            db.add(Tenant(id=DEFAULT_TENANT, name="Local development"))
-            db.commit()
-    return Session
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":  # API and workers may start together: one creates the schema
+            conn.execute(text("SELECT pg_advisory_xact_lock(7242001)"))
+        insp = inspect(conn)
+        if insp.has_table("assessments") and "tenant_id" not in {c["name"] for c in insp.get_columns("assessments")}:
+            raise SchemaError(f"the database at {engine.url!r} uses an older schema (before tenants). It holds only "
+                              "local development data: move it aside and start again, or migrate it.")
+        Base.metadata.create_all(conn)
+        if conn.execute(text("SELECT 1 FROM tenants WHERE id = :t"), {"t": DEFAULT_TENANT}).first() is None:
+            conn.execute(Tenant.__table__.insert().values(id=DEFAULT_TENANT, name="Local development",
+                                                          created_at=now()))
+    return sessionmaker(engine, expire_on_commit=False)
 
 
 def dumps(obj) -> str:

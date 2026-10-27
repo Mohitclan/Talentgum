@@ -3,8 +3,13 @@
 Score-aware assessment of keyboard performances: a student recording is compared with the reference
 score and turned into note-level results, a rubric score, confidence and encouraging feedback.
 
-> **Status: Phases 1 and 2 built (core engine, then local API, worker and review UI).** Runs fully on a
-> laptop, no cloud, no GPU. Phase 3 is AWS/GPU readiness, on hold. See [docs/PHASES.md](docs/PHASES.md).
+> **Status: Phases 1–3 built.**
+> * Phase 1: the core engine.
+> * Phase 2: the local API, worker and review UI.
+> * Phase 3: the AWS deployment (Docker image, S3/SQS/PostgreSQL backends, Terraform), tested locally.
+>
+> Nothing is deployed to AWS yet. Without Docker it all still runs on a laptop with no cloud and no GPU.
+> See [docs/PHASES.md](docs/PHASES.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## How it works
 
@@ -81,16 +86,25 @@ error-detection stages alone, with perfect transcription.
 * **Privacy:** `DELETE /v1/students/{id}` erases a student's recordings, results and reviews;
   `ras purge-audio --older-than-days N` enforces audio retention (results are kept); every recording read,
   review and erasure is in `GET /v1/audit`.
-* Local stand-ins sit behind small interfaces: filesystem for S3, SQLite for RDS (set `RAS_DB_URL` for
-  PostgreSQL), DB queue for SQS.
+* Storage, database and queue sit behind small interfaces: files, SQLite and table polling locally;
+  S3, PostgreSQL and SQS on AWS (environment variables, see [docs/DEPLOY.md](docs/DEPLOY.md)).
 * Results that claim most of the piece is wrong, or have low confidence, go to the review queue instead
   of being final. Teacher corrections are stored and are the ground truth `ras evaluate` uses.
+
+## Run the AWS shape locally (Phase 3)
+
+```bash
+docker compose up -d --build        # PostgreSQL, S3 (SeaweedFS), SQS (ElasticMQ), API on :8088, a worker
+```
+
+AWS deployment, GPU benchmarking and the licence register: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Tests
 
 ```bash
-.venv/bin/pytest            # fast suite, no model needed
-.venv/bin/pytest -m slow    # also runs the real Transkun model
+.venv/bin/pytest                    # fast suite, no model needed
+.venv/bin/pytest -m slow            # also runs the real Transkun model
+docker compose run --rm tests       # cloud backends: PostgreSQL, S3, SQS (stack must be up)
 ```
 
 ## Layout
@@ -108,8 +122,11 @@ ras/pipeline.py      end-to-end assess()
 ras/service          API (FastAPI), worker, queue, DB models, storage, ingest, evaluation, web UI
 ras/synth            songs, MusicXML writer, performance simulator, audio renderer, dataset
 ras/eval             metrics, grouped splits, benchmark harness
-ras/tools/cli.py     `ras` command
+ras/tools/cli.py     `ras` command (ras/tools/sbom.py: licence register)
 data/rubrics         rubric JSON (dev placeholder only)
+Dockerfile, docker-compose.yml   one image for API/worker/admin; the local AWS-shaped stack
+infra/terraform      AWS: ECS, RDS, S3, SQS, ALB, alarms, budget, GPU workers (+ offline plan tests)
+scripts/             setup.sh, smoke_stack.py (end-to-end check of a running deployment)
 ```
 
 ## Phase 1 results (synthetic, 30 recordings)

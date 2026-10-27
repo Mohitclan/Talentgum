@@ -128,9 +128,7 @@ def _delete_bytes_if_unused(db: Session, store: ObjectStore, row: FileRow) -> No
     others = db.execute(select(FileRow.id).where(FileRow.key == row.key, FileRow.id != row.id,
                                                  FileRow.deleted_at.is_(None))).first()
     if others is None:
-        p = store.get_path(row.key)
-        if p.exists():
-            p.unlink()
+        store.delete(row.key)
 
 
 # ---- songs and references --------------------------------------------------------------------
@@ -281,6 +279,9 @@ def create_assessment(db: Session, tenant: str, req: dict,
                 raise ServiceError("idempotency_key_reused",
                                    "this Idempotency-Key was used with a different request", 409)
             return prior, False
+    cb = req.get("callback_url")
+    if cb and not cb.lower().startswith(("https://", "http://")):
+        raise ServiceError("invalid_callback_url", "callback_url must be an http(s) URL", 422)
     ref = latest_reference(db, tenant, req["song_id"], req.get("reference_version"))
     get_file(db, tenant, req["recording_file_id"], "audio")
     rub = get_rubric(db, tenant, req["rubric_id"], req.get("rubric_version"))

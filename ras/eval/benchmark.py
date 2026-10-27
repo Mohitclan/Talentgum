@@ -26,7 +26,8 @@ def _mean(xs):
 def aggregate(res: dict) -> dict:
     recs = res["records"]
     agg: dict = {"model": res["model"], "n_recordings": len(recs), "failures": len(res["failures"]),
-                 "peak_rss_gb": res.get("peak_rss_gb")}
+                 "peak_rss_gb": res.get("peak_rss_gb"), "device": res.get("device", "cpu"),
+                 "peak_gpu_mem_gb": res.get("peak_gpu_mem_gb")}
     tr = [r["transcription"] for r in recs if "transcription" in r]
     for k in ("onset_f1", "onset_offset_f1", "onset_velocity_f1", "onset_precision", "onset_recall"):
         vals = [t[k] for t in tr]
@@ -72,13 +73,14 @@ def report_markdown(aggs: list[dict], unavailable: list[dict], data_dir: Path, n
              "Synthetic audio only: these numbers test the pipeline and say nothing about accuracy "
              "on TalentGum keyboards or phones.\n"]
     lines += ["## Transcription (note-level, mir_eval)\n",
-              "| model | onset F1 (95% CI) | onset+offset F1 | onset+velocity F1 | CPU s per audio min "
-              "| peak RAM GB | failures |", "|---|---|---|---|---|---|---|"]
+              "| model | device | onset F1 (95% CI) | onset+offset F1 | onset+velocity F1 | "
+              "transcribe s per audio min | peak RAM GB | peak GPU mem GB | failures |",
+              "|---|---|---|---|---|---|---|---|---|"]
     for a in aggs:
-        lines.append(f"| {a['model']} | {_fmt(a['onset_f1'])} {_ci(a['onset_f1_ci'])} | "
+        lines.append(f"| {a['model']} | {a.get('device', 'cpu')} | {_fmt(a['onset_f1'])} {_ci(a['onset_f1_ci'])} | "
                      f"{_fmt(a['onset_offset_f1'])} | {_fmt(a['onset_velocity_f1'])} | "
                      f"{_fmt(a['transcribe_cpu_s_per_audio_min'], 1)} | {_fmt(a['peak_rss_gb'], 2)} "
-                     f"| {a['failures']} |")
+                     f"| {_fmt(a.get('peak_gpu_mem_gb'), 2)} | {a['failures']} |")
     lines += ["\n## Error detection (pooled over recordings; precision matters most)\n",
               "| model | precision (CI) | recall (CI) | F1 | timing MAE ms | review rate |",
               "|---|---|---|---|---|---|"]

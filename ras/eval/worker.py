@@ -90,6 +90,11 @@ def run(model: str, data_dir: Path, rubric_path: Path, limit: int | None,
             row["summary"] = res.summary
         out["records"].append(row)
     out["peak_rss_gb"] = round(_peak_rss_gb(), 2)
+    out["device"] = getattr(inner, "device", None) or getattr(getattr(inner, "inner", None), "device", None) or "cpu"
+    if str(out["device"]).startswith("cuda"):
+        import torch
+
+        out["peak_gpu_mem_gb"] = round(torch.cuda.max_memory_allocated() / 1024**3, 2)
     return out
 
 

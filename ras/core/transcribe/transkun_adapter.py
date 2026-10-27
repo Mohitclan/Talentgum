@@ -1,8 +1,9 @@
-"""Transkun V2 (MIT) piano transcription, CPU by default."""
+"""Transkun V2 (MIT) piano transcription, on CPU or a CUDA GPU (`RAS_DEVICE`, default auto)."""
 
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from pathlib import Path
 
@@ -16,17 +17,22 @@ from .base import TranscriberUnavailable, clean_notes
 class TranskunTranscriber:
     name = "transkun"
 
-    def __init__(self, device: str = "cpu", weight: str | None = None, conf: str | None = None,
+    def __init__(self, device: str | None = None, weight: str | None = None, conf: str | None = None,
                  num_threads: int | None = None):
         try:
-            import torch  # noqa: F401
+            import torch
             import transkun
         except ImportError as exc:  # pragma: no cover
             raise TranscriberUnavailable("install the extra: pip install -e '.[transkun]'") from exc
         pre = Path(transkun.__file__).parent / "pretrained"
         self._weight = Path(weight) if weight else pre / "2.0.pt"
         self._conf = Path(conf) if conf else pre / "2.0.conf"
-        self._device = device
+        device = device or os.environ.get("RAS_DEVICE", "auto")  # cpu | cuda | cuda:N | auto
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        elif device.startswith("cuda") and not torch.cuda.is_available():
+            raise TranscriberUnavailable(f"RAS_DEVICE={device} but no CUDA GPU is visible to PyTorch")
+        self.device = self._device = device
         self._num_threads = num_threads
         self._model = None
         self.sample_rate = 44100
@@ -68,6 +74,8 @@ class TranskunTranscriber:
         t0 = time.perf_counter()
         x = torch.from_numpy(np.ascontiguousarray(audio, dtype=np.float32)).reshape(-1, 1)
         events = self._model.transcribe(x.to(self._device), discardSecondHalf=False)
+        if self._device.startswith("cuda"):
+            torch.cuda.synchronize()  # so elapsed_s is the real GPU time
         notes, pedal = [], []
         for e in events:
             if e.pitch > 0:

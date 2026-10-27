@@ -13,11 +13,13 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from starlette.background import BackgroundTask
 
 from . import services as svc
 from .config import Settings
 from .db import DEFAULT_TENANT, Song, make_session_factory
-from .storage import LocalStore
+from .queue import make_signal
+from .storage import make_store
 
 UI_DIR = Path(__file__).parent / "ui"
 
@@ -75,11 +77,13 @@ def problem(status: int, code: str, detail: str) -> JSONResponse:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    settings.check()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     Session = make_session_factory(settings.database_url)
-    store = LocalStore(settings.data_dir / "objects")
-    app = FastAPI(title="Recording Assessment System", version="0.3.0")
-    app.state.settings, app.state.Session, app.state.store = settings, Session, store
+    store = make_store(settings)
+    signal = make_signal(settings)
+    app = FastAPI(title="Recording Assessment System", version="0.4.0")
+    app.state.settings, app.state.Session, app.state.store, app.state.signal = settings, Session, store, signal
 
     def db_session():
         with Session() as db:
@@ -117,7 +121,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health(db=Depends(db_session)):
         db.execute(select(Song.pk).limit(1))
         return {"status": "ok", "transcriber": settings.transcriber, "auth": "keys" if (
-            settings.api_key or svc.any_api_keys(db)) else "open"}
+            settings.api_key or svc.any_api_keys(db)) else "open", "storage": settings.storage,
+            "queue": settings.queue}
 
     @app.get("/", include_in_schema=False)
     def root():
@@ -142,9 +147,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/files/{file_id}/content")
     def file_content(file_id: str, c: Caller = Depends(caller), db=Depends(db_session)):
         row = svc.get_file(db, c.tenant, file_id)
+        cleanup = None
         if row.kind == "audio":  # every access to a recording is audited
             svc.audit(db, c.tenant, c.actor, "recording.read", file_id)
-        return FileResponse(store.get_path(row.key), filename=row.filename)
+            cleanup = BackgroundTask(store.release, row.key)  # no lingering copy of a recording on S3 setups
+        return FileResponse(store.get_path(row.key), filename=row.filename, background=cleanup)
 
     # ---- songs
     def song_view(db, tenant: str, song):
@@ -196,6 +203,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_assessment(body: AssessmentIn, idempotency_key: str | None = Header(None),
                           c: Caller = Depends(caller), db=Depends(db_session)):
         a, created = svc.create_assessment(db, c.tenant, body.model_dump(), idempotency_key)
+        if created:
+            signal.publish(a.id)
         return JSONResponse({"assessment_id": a.id, "status": a.status, "created": created},
                             status_code=202 if created else 200)
 

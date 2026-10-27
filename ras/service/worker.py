@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
+import signal as os_signal
+import socket
+import threading
 import time
 import traceback
+from urllib.parse import urlsplit
 
 from ras.core.rubric import Rubric
 from ras.core.score.reference import load_reference
@@ -15,10 +20,44 @@ from ras.pipeline import PipelineConfig, assess
 
 from .config import Settings
 from .db import Assessment, FileRow, Reference, RubricRow, make_session_factory, now
-from .queue import claim_next, fail_or_retry
-from .storage import LocalStore
+from .queue import claim_next, fail_or_retry, make_signal
+from .storage import make_store
 
 log = logging.getLogger("ras.worker")
+
+
+def emit_metric(status: str, seconds: float, audio_s: float | None) -> None:
+    """One CloudWatch Embedded Metric Format line per job. CloudWatch Logs turns it into metrics with no
+    agent; locally it is just a log line."""
+    doc = {"_aws": {"Timestamp": int(time.time() * 1000), "CloudWatchMetrics": [{
+        "Namespace": "RAS", "Dimensions": [["Status"], []],
+        "Metrics": [{"Name": "Jobs", "Unit": "Count"}, {"Name": "JobSeconds", "Unit": "Seconds"},
+                    {"Name": "RealTimeFactor", "Unit": "None"}]}]},
+        "Status": status, "Jobs": 1, "JobSeconds": round(seconds, 3)}
+    if audio_s:
+        doc["RealTimeFactor"] = round(seconds / audio_s, 4)
+    print(json.dumps(doc), flush=True)
+
+
+def callback_allowed(url: str, allow_private: bool) -> bool:
+    """Refuse webhooks to internal addresses (cloud metadata service, VPC hosts) unless allowed.
+    Checked at send time, after DNS resolution, so a hostname cannot be re-pointed after submission."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    if allow_private:
+        return True
+    if parts.scheme != "https":
+        return False
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return True
 
 
 def sign_webhook(secret: str, body: bytes, timestamp: int | None = None) -> str:
@@ -52,14 +91,17 @@ def default_transcriber_factory(settings: Settings):
 
 class Worker:
     def __init__(self, settings: Settings | None = None, transcriber_factory=None, session_factory=None,
-                 store=None, webhook_post=None):
+                 store=None, webhook_post=None, signal=None):
         self.settings = settings or Settings()
+        self.settings.check()
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.Session = session_factory or make_session_factory(self.settings.database_url)
-        self.store = store or LocalStore(self.settings.data_dir / "objects")
+        self.store = store or make_store(self.settings)
+        self.signal = signal or make_signal(self.settings)
         self._factory = transcriber_factory or (lambda: default_transcriber_factory(self.settings))
         self._transcriber = None
         self._post = webhook_post
+        self.stopping = threading.Event()
 
     @property
     def transcriber(self):
@@ -74,21 +116,34 @@ class Worker:
             if a is None:
                 return None
             asm_id = a.id
+            self.signal.consume_one()  # keeps the broker's queue depth close to the real backlog
+            t0 = time.perf_counter()
             try:
                 self._process(db, a)
             except Exception as exc:  # unexpected: retry, then dead-letter
                 log.exception("job %s crashed", asm_id)
                 fail_or_retry(db, a, "worker_error", f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-1500:]}",
                               self.settings.max_attempts)
+                if a.status == "queued":
+                    self.signal.publish(asm_id)
+            audio_s = ((a.result or {}).get("quality") or {}).get("duration_s")
+            emit_metric(a.status, time.perf_counter() - t0, audio_s)
             if a.status in ("completed", "review_required", "rejected", "failed"):
                 self._notify(a)
             return asm_id
 
-    def run_forever(self, poll_s: float = 1.0) -> None:  # pragma: no cover - loop
-        log.info("worker started")
-        while True:
+    def run_forever(self, poll_s: float = 1.0, install_signal_handlers: bool = False) -> None:  # pragma: no cover
+        """Loop until stopped. On SIGTERM (ECS scale-in, deploys) the current job finishes first; a job cut
+        off anyway is recovered by another worker after the visibility timeout."""
+        if install_signal_handlers:
+            for sig in (os_signal.SIGTERM, os_signal.SIGINT):
+                os_signal.signal(sig, lambda *_: self.stopping.set())
+        log.info("worker started (storage=%s, queue=%s)", self.settings.storage, self.settings.queue)
+        wait_s = poll_s if self.settings.queue == "db" else 20.0
+        while not self.stopping.is_set():
             if self.run_once() is None:
-                time.sleep(poll_s)
+                self.signal.wait(wait_s)
+        log.info("worker stopped")
 
     def _process(self, db, a: Assessment) -> None:
         ref_row = db.query(Reference).filter_by(tenant_id=a.tenant_id, song_id=a.song_id,
@@ -104,8 +159,11 @@ class Worker:
                                             version=a.rubric_version).one()
         rubric = Rubric.model_validate(rub.body)
         reference = load_reference(self.store.get_path(ref_file.key))
-        result = assess(reference, self.store.get_path(rec_file.key), rubric, self.transcriber,
-                        start_s=a.start_s, config=PipelineConfig())
+        try:
+            result = assess(reference, self.store.get_path(rec_file.key), rubric, self.transcriber,
+                            start_s=a.start_s, config=PipelineConfig())
+        finally:
+            self.store.release(rec_file.key)
         d = result.model_dump(mode="json")
         d["versions"]["reference_version"] = a.reference_version
         a.result = d
@@ -122,6 +180,9 @@ class Worker:
 
     def _notify(self, a: Assessment) -> None:
         if not a.callback_url:
+            return
+        if not callback_allowed(a.callback_url, self.settings.allow_private_webhooks):
+            log.warning("webhook for %s not sent: %s is not an allowed public https address", a.id, a.callback_url)
             return
         body = json.dumps({"event": f"assessment.{a.status}", "assessment_id": a.id, "status": a.status,
                            "external_ref": a.external_ref}).encode()

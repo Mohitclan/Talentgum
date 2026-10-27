@@ -12,7 +12,7 @@ from rich.table import Table
 
 from ras.core.rubric import load_rubric
 
-app = typer.Typer(help="Recording Assessment System (Phase 1: local CLI)", no_args_is_help=True)
+app = typer.Typer(help="Recording Assessment System", no_args_is_help=True)
 console = Console()
 DEFAULT_RUBRIC = Path(__file__).resolve().parents[2] / "data" / "rubrics" / "dev_placeholder.json"
 
@@ -120,9 +120,11 @@ def benchmark(
 def serve(
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(8000),
-    data_dir: Path = typer.Option(Path("data/service"), help="Where the database and files live"),
-    transcriber: str = typer.Option("transkun", help="transkun | basic-pitch"),
-    with_worker: bool = typer.Option(True, help="Run a worker thread inside the server (simplest locally)"),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR",
+                                  help="Where the database and files live"),
+    transcriber: str = typer.Option("transkun", envvar="RAS_TRANSCRIBER", help="transkun | basic-pitch"),
+    with_worker: bool = typer.Option(True, envvar="RAS_WITH_WORKER",
+                                     help="Run a worker thread inside the server (simplest locally)"),
 ):
     """Start the API and web UI (http://HOST:PORT/ui/). Add --no-with-worker and run `ras worker` separately."""
     import threading
@@ -134,45 +136,70 @@ def serve(
     from ras.service.worker import Worker
 
     settings = Settings(data_dir=data_dir, transcriber=transcriber)
+    _setup_logging(settings)
     app = create_app(settings)
     if with_worker:
-        worker = Worker(settings, session_factory=app.state.Session, store=app.state.store)
+        worker = Worker(settings, session_factory=app.state.Session, store=app.state.store, signal=app.state.signal)
         threading.Thread(target=worker.run_forever, daemon=True, name="ras-worker").start()
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info", log_config=None if settings.log_format == "json" else
+                uvicorn.config.LOGGING_CONFIG, proxy_headers=True, forwarded_allow_ips="*")
 
 
 @app.command()
 def worker(
-    data_dir: Path = typer.Option(Path("data/service")),
-    transcriber: str = typer.Option("transkun"),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
+    transcriber: str = typer.Option("transkun", envvar="RAS_TRANSCRIBER"),
 ):
-    """Run a worker process that handles queued assessments."""
-    import logging
-
+    """Run a worker process that handles queued assessments. Stops cleanly on SIGTERM."""
     from ras.service.config import Settings
     from ras.service.worker import Worker
 
-    logging.basicConfig(level=logging.INFO)
-    Worker(Settings(data_dir=data_dir, transcriber=transcriber)).run_forever()
+    settings = Settings(data_dir=data_dir, transcriber=transcriber)
+    _setup_logging(settings)
+    Worker(settings).run_forever(install_signal_handlers=True)
+
+
+def _setup_logging(settings) -> None:
+    import logging
+
+    if settings.log_format != "json":
+        logging.basicConfig(level=logging.INFO)
+        return
+
+    class JsonFormatter(logging.Formatter):  # one JSON object per line, as CloudWatch Logs Insights expects
+        def format(self, r):
+            d = {"level": r.levelname, "logger": r.name, "message": r.getMessage(),
+                 "time": self.formatTime(r, "%Y-%m-%dT%H:%M:%S")}
+            if r.exc_info:
+                d["exc"] = self.formatException(r.exc_info)
+            return json.dumps(d)
+
+    h = logging.StreamHandler()
+    h.setFormatter(JsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[h], force=True)
 
 
 @app.command()
 def ingest(
     manifest: Path = typer.Argument(..., exists=True, help="Client manifest JSON (see ras/service/ingest.py)"),
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
     tenant: str = typer.Option("local", help="Tenant that owns the data"),
 ):
     """Load songs, a rubric and recordings from a manifest and queue them for the worker."""
     from ras.service.config import Settings
     from ras.service.db import make_session_factory
     from ras.service.ingest import ingest_manifest
-    from ras.service.storage import LocalStore
+    from ras.service.queue import make_signal
+    from ras.service.storage import make_store
 
     settings = Settings(data_dir=data_dir)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     Session = make_session_factory(settings.database_url)
     with Session() as db:
-        out = ingest_manifest(db, LocalStore(settings.data_dir / "objects"), manifest, tenant)
+        out = ingest_manifest(db, make_store(settings), manifest, tenant)
+    signal = make_signal(settings)
+    for asm_id in out["queued"]:
+        signal.publish(asm_id)
     console.print(f"songs {out['songs']} (+{out['references_added']} versions), rubric {out['rubric']}, "
                   f"{len(out['queued'])} recordings queued")
     for e in out["errors"]:
@@ -182,7 +209,7 @@ def ingest(
 
 @app.command()
 def evaluate(
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
     target_false_alarm: float = typer.Option(0.10, help="Highest acceptable share of wrong error claims"),
     out: Optional[Path] = typer.Option(None, help="Write the full JSON report here"),
     tenant: str = typer.Option("local"),
@@ -222,7 +249,7 @@ def _session(data_dir: Path):
 def tenant_create(
     tenant_id: str = typer.Argument(..., help="Short id, e.g. talentgum"),
     name: str = typer.Option("", help="Display name"),
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
 ):
     """Create a tenant (client organisation) and print its first API key. The key is shown only once."""
     from ras.service import services as svc
@@ -238,7 +265,7 @@ def tenant_create(
 def key_create(
     tenant_id: str = typer.Argument(...),
     label: str = typer.Option(""),
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
 ):
     """Issue another API key for a tenant (for rotation). Shown only once."""
     from ras.service import services as svc
@@ -250,7 +277,7 @@ def key_create(
 @app.command("key-revoke")
 def key_revoke(
     prefix: str = typer.Argument(..., help="The first 12 characters of the key"),
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
 ):
     """Revoke an API key immediately."""
     from ras.service import services as svc
@@ -263,16 +290,31 @@ def key_revoke(
 @app.command("purge-audio")
 def purge_audio(
     older_than_days: int = typer.Option(..., help="Delete recordings of assessments finished more than N days ago"),
-    data_dir: Path = typer.Option(Path("data/service")),
+    data_dir: Path = typer.Option(Path("data/service"), envvar="RAS_DATA_DIR"),
     tenant: Optional[str] = typer.Option(None, help="Only this tenant (default: all)"),
 ):
     """Retention: delete raw recordings after the retention period. Results and reviews are kept."""
     from ras.service import services as svc
-    from ras.service.storage import LocalStore
+    from ras.service.config import Settings
+    from ras.service.storage import make_store
 
     with _session(data_dir)() as db:
-        n = svc.purge_audio(db, LocalStore(data_dir / "objects"), older_than_days, tenant)
+        n = svc.purge_audio(db, make_store(Settings(data_dir=data_dir)), older_than_days, tenant)
     console.print(f"{n} recording(s) deleted")
+
+
+@app.command()
+def sbom(
+    out_dir: Path = typer.Option(Path("docs/compliance"), help="Where to write the register"),
+    name: str = typer.Option("local", help="Label for this environment, e.g. image or local"),
+):
+    """Licence register and CycloneDX SBOM of the installed packages and bundled models."""
+    from ras.tools.sbom import write_register
+
+    md, cdx, flagged = write_register(out_dir, name)
+    console.print(f"Wrote {md} and {cdx}")
+    for f in flagged:
+        console.print(f"[yellow]review licence:[/yellow] {f}")
 
 
 if __name__ == "__main__":

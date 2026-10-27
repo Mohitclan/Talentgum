@@ -23,6 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 transkun = ["torch", "transkun"]
 service = ["fastapi", "uvicorn[standard]", "sqlalchemy>=2", "python-multipart", "httpx"]
+aws = ["boto3", "psycopg[binary]>=3.1"]
 dev = ["pytest", "ruff"]
 
 [project.scripts]
@@ -31,10 +32,14 @@ ras = "ras.tools.cli:app"
 [tool.setuptools.packages.find]
 include = ["ras*"]
 
+[tool.setuptools.package-data]
+"ras.service" = ["ui/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow' -q"
-markers = ["slow: needs a neural transcription model"]
+addopts = "-m 'not slow and not cloud' -q"
+markers = ["slow: needs a neural transcription model",
+           "cloud: needs the docker compose stack (PostgreSQL, SeaweedFS, ElasticMQ)"]
 
 [tool.ruff]
 line-length = 120
