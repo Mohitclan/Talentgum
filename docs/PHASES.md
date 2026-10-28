@@ -82,7 +82,11 @@ Guide: [CRITERIA.md](CRITERIA.md).
   recordings to the score (there is no MIDI), plus a start checkpoint; training needs a GPU.
 * Not done, needs client data or a decision: see the end of [CRITERIA.md](CRITERIA.md).
 
-## Next: class-recording annotation (planned, not built)
-TalentGum's data is 40-60 minute online classes. They must be cut into one clip per song attempt, with
-the song identified, before the assessment, accuracy test and training can use them. Plan and open
-items: [CLASS_RECORDINGS.md](CLASS_RECORDINGS.md).
+## Class-recording annotation: first version built, tested on synthetic classes
+TalentGum's data is 40-60 minute online classes. `ras segment` cuts each one into one clip per song attempt
+(transcribe in chunks, find the playing, identify the song among the five, split repeated and abandoned
+attempts) and writes an annotation JSON, the transcript and the clips; `ras segment-eval` scores it against a
+teacher's labels. On a rendered 8 minute synthetic class it found 6 of 6 attempts with no false clips.
+Method, output format, trial and open items: [CLASS_RECORDINGS.md](CLASS_RECORDINGS.md).
+* Not done: the teacher review screen for clips, a "score only the part played" mode for partial attempts,
+  a rule for one-handed playing in the assessment, and any test on real classes.

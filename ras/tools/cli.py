@@ -462,6 +462,63 @@ def finetune_export(
 
 
 @app.command()
+def segment(
+    classes: list[Path] = typer.Argument(..., exists=True,
+                                         help="Class recordings, or folders with one sub-folder per student"),
+    songs: Path = typer.Option(..., "--songs", exists=True, file_okay=False,
+                               help="Folder of MXL/MIDI files; each file name is the song id"),
+    out: Path = typer.Option(Path("data/classes"), help="Where annotations, transcripts and clips go"),
+    transcriber: str = typer.Option("transkun", envvar="RAS_TRANSCRIBER"),
+    clips: bool = typer.Option(True, help="Cut the clips as audio files"),
+    keep_names: bool = typer.Option(False, help="Use folder names instead of hashed student ids"),
+    reuse: bool = typer.Option(True, help="Reuse a saved transcript instead of transcribing again"),
+    chunk_s: float = typer.Option(600.0, help="Transcribe in pieces of this many seconds"),
+):
+    """Cut long class recordings into one clip per song attempt, and write an annotation for each class."""
+    from ras.core.transcribe import get_transcriber
+    from ras.segment import annotate_class, load_songs
+    from ras.segment.classfile import AUDIO_EXTS
+
+    models = load_songs(songs)
+    console.print(f"{len(models)} songs: {', '.join(m.song_id for m in models)}")
+    work: list[tuple[Path, str]] = []
+    for c in classes:
+        if c.is_dir():
+            for f in sorted(p for p in c.rglob("*") if p.is_file() and p.suffix.lower() in AUDIO_EXTS):
+                rel = f.relative_to(c)
+                work.append((f, rel.parts[0] if len(rel.parts) > 1 else c.name))
+        else:
+            work.append((c, c.parent.name))
+    if not work:
+        raise typer.BadParameter("no audio files found")
+    tr = get_transcriber(transcriber)
+    review = 0
+    for k, (f, student) in enumerate(work, 1):
+        rec = annotate_class(f, models, tr, out, student=student, keep_names=keep_names, cut_clips=clips,
+                             chunk_s=chunk_s, reuse=reuse, log=lambda m: console.print(f"  [dim]{m}[/dim]"))
+        n_review = sum(c["status"] == "needs_review" for c in rec["clips"])
+        review += n_review
+        console.print(f"[{k}/{len(work)}] {f.name}: {rec['duration_s'] / 60:.0f} min, {len(rec['clips'])} clips "
+                      f"({n_review} to check) in {rec['seconds_taken']:.0f} s")
+    console.print(f"Annotations in {out}. {review} clip(s) need a teacher's check.")
+
+
+@app.command("segment-eval")
+def segment_eval(
+    annotation: Path = typer.Argument(..., exists=True, help="The class's annotation JSON written by `ras segment`"),
+    labels: Path = typer.Argument(..., exists=True,
+                                  help='JSON list of the teacher\'s labels: [{"song_id", "start_s", "end_s"}]'),
+    min_iou: float = typer.Option(0.5, help="Overlap needed for a clip to count as the labelled attempt"),
+):
+    """How well the splitter found the attempts a teacher labelled in one class."""
+    from ras.segment import evaluate
+
+    result = evaluate(json.loads(annotation.read_text()), json.loads(labels.read_text()), min_iou)
+    for k, v in result.items():
+        console.print(f"{k}: {v}")
+
+
+@app.command()
 def sbom(
     out_dir: Path = typer.Option(Path("docs/compliance"), help="Where to write the register"),
     name: str = typer.Option("local", help="Label for this environment, e.g. image or local"),

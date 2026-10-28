@@ -78,6 +78,19 @@ when a criterion needs it, and a criterion that cannot be measured for a recordi
 score, no pedal, a keyboard without velocity, no teacher benchmark) is reported as not assessed, with
 the reason. Details: [docs/CRITERIA.md](docs/CRITERIA.md).
 
+## Class recordings: finding the song attempts
+
+```bash
+.venv/bin/ras segment classes/ --songs songs/ --out data/classes   # classes/<student>/<class>.m4a; songs/<song_id>.mxl
+.venv/bin/ras segment-eval data/classes/<student_id>/<class>.json labels.json
+```
+
+TalentGum's recordings are 40-60 minute online classes. `ras segment` transcribes each class in pieces,
+finds where someone plays, names which of the songs it is, splits repeated or abandoned attempts, and writes
+a JSON annotation plus one audio clip per attempt (each short enough for the assessment). Clips it is not
+sure of are marked `needs_review`. Student folder names are replaced by hashed ids unless `--keep-names`.
+Plan, method and open items: [docs/CLASS_RECORDINGS.md](docs/CLASS_RECORDINGS.md).
+
 ## Run the service (Phase 2)
 
 ```bash
@@ -135,6 +148,7 @@ ras/core/expression  note order, chord detail, rhythm, hesitations, articulation
 ras/core/second_opinion, dynamics_model, profile, criteria   second transcriber, audio dynamics,
                      teacher benchmarks, the client-criteria map
 ras/core/rubric      rubric model and scoring engine (fallback metrics, models_needed)
+ras/segment          class recordings -> song attempts (regions, song identification, clips, evaluation)
 ras/models           optional model registry, checksummed download, allow-list loader, vendored model code
 ras/core/confidence  confidence and "needs review"
 ras/core/feedback    template feedback

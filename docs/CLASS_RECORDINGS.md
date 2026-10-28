@@ -1,7 +1,8 @@
 # Class recordings: finding where the student plays
 
-Status: **plan, nothing built yet** (written 2026-10-28). This is the first stage of working with TalentGum's
-real data. The numbers below are starting values, to be tuned on classes that a teacher has labelled.
+Status: **first version built** (`ras segment`, code in `ras/segment/`), tested only on synthetic classes. This is the
+first stage of working with TalentGum's real data. The numbers below are starting values, to be tuned on
+classes that a teacher has labelled.
 
 ## Why this stage exists
 
@@ -49,25 +50,46 @@ least half of its notes are matched in the aligned stretch.
 
 ## Output
 
-One record per class recording, kept as JSON next to the class file:
+One record per class recording, written next to its transcript and clips as
+`<out>/<student_id>/<class>.json`:
 
 ```json
 {
-  "class_file": "student_ab12/2026-09-14.m4a",
+  "class_file": "class_1.m4a",
+  "student_id": "s_3f9a1c02",
   "duration_s": 2712.4,
   "transcriber": "transkun-2.0.pt-<hash>",
-  "playing_regions": [{"start_s": 600.1, "end_s": 912.0}],
+  "notes_file": "s_3f9a1c02/class_1.notes.json",
+  "songs": ["ode_to_joy", "twinkle"],
+  "playing_regions": [{"start_s": 600.1, "end_s": 912.0, "notes": 240, "clips": 3}],
   "clips": [
-    {"clip_id": "student_ab12_2026-09-14_01", "song_id": "ode_to_joy",
-     "start_s": 612.4, "end_s": 668.9, "match_score": 0.82,
-     "reference_notes": 30, "notes_matched": 25, "coverage": "full",
-     "status": "auto", "reviewer": null}
+    {"clip_id": "s_3f9a1c02_class_1_01", "song_id": "ode_to_joy",
+     "start_s": 612.4, "end_s": 668.9, "clip_start_s": 610.4, "clip_end_s": 670.9, "assess_start_s": 2.0,
+     "match_score": 0.92, "matched_steps": 25, "song_steps": 29, "coverage": "full", "coverage_pct": 96.0,
+     "song_bars": [1, 8], "margin": 0.49, "status": "auto", "review_reasons": [], "reviewer": null,
+     "file": "s_3f9a1c02/class_1_clips/s_3f9a1c02_class_1_01.flac"}
   ]
 }
 ```
 
-`status` is `auto`, `confirmed`, `rejected` or `adjusted`. A region that matches no song stays in
+`assess_start_s` is where the playing starts inside the clip, ready for the assessment's start timestamp.
+The transcript is saved too, so thresholds can be changed and the class re-searched without transcribing
+again. `status` starts as `auto` or `needs_review` (few notes matched, many wrong steps, a rival song matches
+almost as well, or the clip was cut at 5 minutes); a teacher sets it to `confirmed`, `rejected` or `adjusted`. A region that matches no song stays in
 `playing_regions` with no clip, so nothing is thrown away silently.
+
+## How to run
+
+```bash
+ras segment classes/ --songs songs/ --out data/classes
+```
+
+- `classes/` holds one folder per student with that student's class recordings inside; a single file also works.
+- `songs/` holds the MXL or MIDI files; the file name is the song id (`ode_to_joy.mxl`).
+- Student folder names become hashed ids in every output; `--keep-names` turns that off.
+- A saved transcript is reused on a second run (`--no-reuse` to redo it). `--chunk-s` sets the piece length
+  (default 10 minutes, overlapping by 10 s, joined in the middle of the overlap).
+- `ras segment-eval annotation.json labels.json` scores one class against a teacher's labels.
 
 ## Teacher check
 
@@ -78,7 +100,8 @@ A reviewer sees each clip with its audio, the song it was matched to, and the ma
 - mark the attempt as partial.
 
 Confirmed and adjusted clips are the labelled set that measures this stage and the starting material for
-later training. The current review screen works on notes, not clips, so this view must be added.
+later training. The current review screen works on notes, not clips, so this view is **not built yet**. Until it is, the
+reviewer can work from the JSON and the clip files.
 
 ## How we will measure it
 
@@ -92,12 +115,29 @@ compare. Four numbers:
 
 Targets are to be agreed with TalentGum; none are promised yet.
 
+## First trial (synthetic class)
+
+An 8 minute class was rendered from the synthetic songs: talking-like noise about half of the time, five
+attempts of four songs (one stopped and restarted, one repeated with two wrong notes), room echo and AAC
+compression. Transkun transcribed it in 2 minute chunks and `ras segment` ran on the result.
+
+| | Result |
+|---|---|
+| Labelled attempts found | 6 of 6, all with the right song |
+| Invented clips | 0 |
+| Typical start / end error | 0.02 s / 0.03 s |
+| Clips marked for a teacher | 3 of 6, all close calls between songs that move by steps (Twinkle, Mary, Ode to Joy); the song was right each time |
+| Time on this laptop's CPU | about 4.5 minutes for the 8 minutes |
+
+This shows the method works when the transcription is reasonable. It says little about real classes:
+the noise here is synthetic, not speech, and the piano is a simple synth. Real classes are the test.
+
 ## Compute
 
-Transcribing a 45 minute class takes about 40 CPU-minutes with Transkun on a laptop (measured:
-57 CPU-seconds per audio minute). The GPU should cut this a lot, but we have not measured it. Before
-planning the full run, time one class on the GPU. This stage runs as a batch job, outside the live
-service, so the 5 minute and 15 minute limits of the service do not apply to it.
+On this Intel laptop's CPU, Transkun took about 4.5 minutes for 8 minutes of class (wall-clock), so a
+45 minute class would take roughly 25 minutes (an extrapolation). The GPU should cut this a lot, but we
+have not measured it. Before planning the full run, time one real class on the GPU. This stage runs as a
+batch job, outside the live service, so the 5 minute and 15 minute limits of the service do not apply.
 
 ## Risks
 
