@@ -81,3 +81,8 @@ Guide: [CRITERIA.md](CRITERIA.md).
   teacher grades. `ras finetune prepare/export` builds a Transkun fine-tuning set by aligning teacher
   recordings to the score (there is no MIDI), plus a start checkpoint; training needs a GPU.
 * Not done, needs client data or a decision: see the end of [CRITERIA.md](CRITERIA.md).
+
+## Next: class-recording annotation (planned, not built)
+TalentGum's data is 40-60 minute online classes. They must be cut into one clip per song attempt, with
+the song identified, before the assessment, accuracy test and training can use them. Plan and open
+items: [CLASS_RECORDINGS.md](CLASS_RECORDINGS.md).
