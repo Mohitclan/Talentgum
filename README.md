@@ -9,7 +9,7 @@ score and turned into note-level results, a rubric score, confidence and encoura
 > * Phase 3: the AWS deployment (Docker image, S3/SQS/PostgreSQL backends, Terraform), tested locally.
 >
 > Nothing is deployed to AWS yet. Without Docker it all still runs on a laptop with no cloud and no GPU.
-> See [docs/PHASES.md](docs/PHASES.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
+> See [docs/HANDOFF.md](docs/HANDOFF.md) (current state, next steps), [docs/PHASES.md](docs/PHASES.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## How it works
 
