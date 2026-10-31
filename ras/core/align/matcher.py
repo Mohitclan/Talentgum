@@ -64,12 +64,14 @@ def _perf_groups(perf: list[PerfNote], gap_s: float = 0.09) -> list[list[int]]:
     return groups
 
 
-def match_groups(ref: Reference, perf: list[PerfNote]) -> Alignment:
+def match_groups(ref: Reference, perf: list[PerfNote], any_member: bool = False) -> Alignment:
     """Global monotone alignment of score onset-groups to performed onset-groups.
 
     Needleman-Wunsch over chords: similarity is the share of shared pitches, skipping a group
     costs a fixed penalty. Being global and ordered, it cannot swap two identical bars, which a
     local matcher can do when notes in one of them are wrong.
+    `any_member`: a performed group counts in full if it holds the score's notes, whatever else sounds
+    with them (harmonics, accompaniment), for songs with one note at a time.
     """
     n_ref = len(ref.notes)
     rg: list[list[int]] = []
@@ -88,7 +90,7 @@ def match_groups(ref: Reference, perf: list[PerfNote]) -> Alignment:
     for i in range(R):
         for j in range(Q):
             inter = len(rsets[i] & psets[j])
-            sim[i, j] = inter / max(len(rsets[i]), len(psets[j]))
+            sim[i, j] = inter / (len(rsets[i]) if any_member else max(len(rsets[i]), len(psets[j])))
     score = match_lo + match_hi * sim  # sim 0 -> -0.8 (aligned but unrelated), sim 1 -> +1.2
     for i in range(1, R + 1):
         for j in range(1, Q + 1):

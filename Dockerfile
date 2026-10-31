@@ -24,7 +24,8 @@ RUN pip install --no-deps . && python -c "import ras, ras.pipeline; print('ras',
 # add "kong" (164 MB) when a rubric uses pedal_source kong/agree; "" for none
 ARG DOWNLOAD_MODELS="hft dynamics"
 RUN mkdir -p /opt/models && if [ -n "${DOWNLOAD_MODELS}" ]; then \
-      RAS_MODELS_DIR=/opt/models ras models download ${DOWNLOAD_MODELS}; fi
+      RAS_MODELS_DIR=/opt/models ras models download ${DOWNLOAD_MODELS}; fi \
+    && chmod -R a+rX /opt/models
 
 FROM python:${PYTHON}-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \

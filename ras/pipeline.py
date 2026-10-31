@@ -26,6 +26,7 @@ from ras.core.confidence import estimate_confidence
 from ras.core.errors import AnalysisConfig, analyze
 from ras.core.expression import measure as measure_expression
 from ras.core.feedback import make_feedback
+from ras.core.melody import isolate_melody, reference_fit
 from ras.core.profile import compare as compare_profile
 from ras.core.rubric import Rubric, score_analysis
 from ras.core.rubric.engine import models_needed
@@ -35,7 +36,7 @@ from ras.core.verify import OnsetEvidence, mark_uncertain_missing
 from ras.models.hub import ModelHub, default_hub
 from ras.types import PedalEvent, PerfNote
 
-ANALYSIS_VERSION = "analysis-2"  # 2: expression measures, second opinions, teacher profiles
+ANALYSIS_VERSION = "analysis-3"  # 2: expression measures, second opinions, teacher profiles; 3: melody isolation, reference fit
 
 
 def _py(obj):
@@ -88,6 +89,9 @@ class PipelineConfig:
     verify_missing: bool = False
     verify_threshold_db: float = 2.5  # onset jump in excess of the neighbouring semitones
     quality: QualityLimits = field(default_factory=QualityLimits)
+
+
+NOT_THIS_SONG_FEEDBACK = ["Thank you for playing! Your teacher will listen to this one and get back to you."]
 
 
 def _git_commit() -> str | None:
@@ -277,7 +281,15 @@ def assess(
 
     # 4. transposition, alignment, error detection
     t0 = time.perf_counter()
-    shift, evidence = estimate_transposition(ref, notes)
+    melody = isolate_melody(ref, notes) if rubric.options.isolate_melody else None
+    if melody is not None and melody.applied:
+        notes, shift, evidence = melody.notes, melody.shift, melody.evidence
+        if melody.harmonics_removed:
+            res.warnings.append(f"{melody.harmonics_removed}_harmonics_not_counted_as_notes")
+        if melody.accompaniment_heard:
+            res.warnings.append(f"chords_or_second_hand_heard_under_melody_in_{melody.accompaniment_groups}_places")
+    else:
+        shift, evidence = estimate_transposition(ref, notes)
     allowed = rubric.options.allow_transposition
     applied = shift if allowed else 0
     res.transposition = {"detected_semitones": shift, "evidence": round(evidence, 3),
@@ -316,6 +328,16 @@ def assess(
     conf = estimate_confidence(
         analysis, quality.quality_score, rubric.options.review_confidence_threshold,
         start_suspect=start_suspect, transposed_not_allowed=bool(shift and not allowed))
+    fit = reference_fit(analysis.results)
+    not_this_song = fit < rubric.options.min_reference_fit
+    if not_this_song:  # guessing marks for a song the student may not have played helps nobody
+        res.warnings.append("playing_does_not_match_this_song")
+        conf.value = round(conf.value * 0.5, 3)
+        conf.reasons.append("reference_mismatch")
+        conf.needs_review = True
+    if melody is not None and melody.accompaniment_heard:  # whose playing is it? only a person can tell
+        conf.reasons.append("chords_or_second_hand_heard")
+        conf.needs_review = True
     disagree = [s for s in analysis.extras.get("second_opinion", []) if s["note_agreement_pct"] < 70]
     if disagree:  # the transcribers heard different things: a teacher should look
         conf.value = round(conf.value * 0.85, 3)
@@ -323,11 +345,17 @@ def assess(
         conf.needs_review = conf.needs_review or conf.value < rubric.options.review_confidence_threshold
     res.summary = _py(analysis.summary())
     res.summary["second_opinion"] = analysis.extras.get("second_opinion", [])
+    res.summary["reference_fit_pct"] = round(100.0 * fit, 1)
+    if melody is not None:
+        res.summary["melody"] = melody.to_dict()
     res.scoring = _py(scoring.to_dict())
+    if not_this_song:  # the criteria stay in the result for the reviewing teacher
+        res.scoring.update(total_score=None, band=None, withheld="playing_does_not_match_this_song")
     res.scoring_inputs = _py(analysis.scoring_inputs())
     res.confidence = {"value": conf.value, "needs_review": conf.needs_review, "reasons": conf.reasons}
     res.notes = [_py(asdict(n)) for n in analysis.results]
-    res.feedback = make_feedback(analysis, ref, rubric.options.timing_tolerance_ms)
+    res.feedback = (list(NOT_THIS_SONG_FEEDBACK) if not_this_song
+                    else make_feedback(analysis, ref, rubric.options.timing_tolerance_ms))
     unassessed = [k for k, v in scoring.criteria.items() if v["status"] == "not_assessed"]
     if unassessed:
         res.warnings.append("not_assessed: " + ", ".join(unassessed))
