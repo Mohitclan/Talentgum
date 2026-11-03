@@ -11,9 +11,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from starlette.background import BackgroundTask
+
+from ras.core.criteria import CRITERIA
 
 from . import services as svc
 from .config import Settings
@@ -22,6 +25,7 @@ from .queue import make_signal
 from .storage import make_store
 
 UI_DIR = Path(__file__).parent / "ui"
+APP_DIR = Path(__file__).parent / "app"  # built by `npm run build` in frontend/
 
 
 class SongIn(BaseModel):
@@ -136,15 +140,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def root():
-        return RedirectResponse("/ui/")
+        return RedirectResponse("/app/" if (APP_DIR / "index.html").exists() else "/ui/")
 
     @app.get("/ui/", include_in_schema=False)
     def ui():
         return FileResponse(UI_DIR / "index.html")
 
+    if (APP_DIR / "index.html").exists():  # the TalentGum frontend (frontend/), once built
+        app.mount("/app", StaticFiles(directory=APP_DIR, html=True), name="app")
+
     @app.get("/v1/me")
     def me(c: Caller = Depends(caller)):
         return {"tenant": c.tenant, "actor": c.actor}
+
+    @app.get("/v1/criteria")
+    def criteria():
+        """The client's criteria and their groups (note, chord, timing, performance), for grouping scores."""
+        return [{"id": c.id, "group": c.group, "label": c.label} for c in CRITERIA]
 
     # ---- files
     @app.post("/v1/files", status_code=201)

@@ -5,6 +5,14 @@
 
 ARG PYTHON=3.12
 
+# the TalentGum frontend (frontend/), built to static files that the API serves at /app/
+FROM node:22-slim AS web
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build -- --outDir /web/dist
+
 FROM python:${PYTHON}-slim AS build
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 ARG TORCH_VERSION=2.2.2
@@ -19,12 +27,14 @@ COPY pyproject.toml README.md ./
 RUN mkdir ras && touch ras/__init__.py && pip install ".[transkun,service,aws,models]" && pip uninstall -y ras \
     && rm -rf ras build *.egg-info
 COPY ras ./ras
+COPY --from=web /web/dist ./ras/service/app
 RUN pip install --no-deps . && python -c "import ras, ras.pipeline; print('ras', ras.__version__)"
 # optional open-source models baked into the image (checksum-verified): "hft dynamics" by default (27 MB),
 # add "kong" (164 MB) when a rubric uses pedal_source kong/agree; "" for none
 ARG DOWNLOAD_MODELS="hft dynamics"
 RUN mkdir -p /opt/models && if [ -n "${DOWNLOAD_MODELS}" ]; then \
-      RAS_MODELS_DIR=/opt/models ras models download ${DOWNLOAD_MODELS}; fi
+      RAS_MODELS_DIR=/opt/models ras models download ${DOWNLOAD_MODELS}; fi \
+    && chmod -R a+rX /opt/models
 
 FROM python:${PYTHON}-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \

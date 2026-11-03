@@ -122,6 +122,7 @@ def _fetch(f: ModelFile, dest: Path) -> None:
     if got != f.sha256:
         os.unlink(tmp.name)
         raise RuntimeError(f"{dest.name}: SHA-256 mismatch (expected {f.sha256[:12]}, got {got[:12]})")
+    os.chmod(tmp.name, 0o644)  # NamedTemporaryFile is 0600; the workers run as a different user
     os.replace(tmp.name, dest)
 
 

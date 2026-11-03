@@ -85,6 +85,10 @@ class RubricOptions(BaseModel):
     # where pedal comes from: the main transcriber, Kong's model, or only where both agree
     pedal_source: Literal["primary", "kong", "agree"] = "primary"
     verify_missing_audio: bool = False  # the spectral double-check of missing notes (ras.core.verify)
+    # one-line songs: score only the melody; harmonics and accompaniment are reported, not counted as extras
+    isolate_melody: bool = False
+    # below this share of the played stretch found, the score is withheld: it may be a different song. 0: off
+    min_reference_fit: float = 0.0
 
 
 class Rubric(BaseModel):

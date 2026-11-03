@@ -19,3 +19,6 @@ infra
 *.sf2
 .env
 models
+frontend/node_modules
+frontend/dist
+ras/service/app

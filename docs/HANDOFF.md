@@ -1,7 +1,7 @@
 # Handoff: where the project stands
 
 Written 2026-10-29 so a new person or a new Claude account can carry on without the old chat.
-Read this first, then [PHASES.md](PHASES.md), [CRITERIA.md](CRITERIA.md) and [CLASS_RECORDINGS.md](CLASS_RECORDINGS.md).
+Read this first, then [CHANGES_2026-10.md](CHANGES_2026-10.md) (latest fixes, real-audio results, decisions), [PHASES.md](PHASES.md), [CRITERIA.md](CRITERIA.md) and [CLASS_RECORDINGS.md](CLASS_RECORDINGS.md).
 
 ## What this is
 
@@ -41,13 +41,16 @@ engine). Third-party checkpoints load through an allow-list loader (`ras/models/
 - Production input is different: about 20 recordings a day, 2-3 min each, 5 min maximum.
 - Reference is MXL and MIDI only. Teachers sometimes play wrong notes, so teacher recordings are never
   note truth. No existing rubric. All 22 criteria required. Tone must be positive.
+- Confirmed by TalentGum's developer (Oct 2026): MIDI and MXL are the only source of truth. Slides and WAVs never override
+  them, and teacher recordings are not a reference. Teachers are still needed to mark student clips.
 - Students play right hand, left hand or both. No paired audio and MIDI exists.
 - AWS, Docker, REST. Corrected MIDI may be kept for training; teachers verify jointly with us.
 - Only the Ode to Joy MXL and MIDI have been received (notes only, right hand, no marks).
 
 ## Honest limits
 
-- **Every accuracy number is from synthetic audio.** Nothing is measured on real TalentGum recordings.
+- **No accuracy is measured on real student audio yet.** Three real clips were run (see CHANGES_2026-10.md), but no teacher has
+  checked them. The accuracy numbers elsewhere in the docs are from synthetic audio.
 - The rubric weights and confidence are heuristics until calibrated on teacher marks.
 - The assessment judges at most 5 minutes (`max_duration_s=300`), one performance, 15 minute job timeout,
   50 MB upload cap. Class recordings must go through `ras segment` first.
@@ -71,14 +74,13 @@ account, so the open items are repeated above.
 
 ## Next steps, in order
 
-1. Get the missing songs and real classes, then run
-   `ras segment classes/ --songs songs/ --out data/classes` and score it with
-   `ras segment-eval annotation.json labels.json`. Tune the thresholds in `ras/segment/find.py`
-   (`SegmentConfig`).
-2. Time one real class on the GPU.
-3. Build the teacher review screen for clips (the current screen works on notes, not clips).
-4. Add a "score only the part played" mode, so stopped or one-handed attempts are scored fairly.
-5. First accuracy test of `assess` on real clips; teachers verify a sample; calibrate with `ras calibrate`.
+The full list, with the questions for TalentGum, is in [CHANGES_2026-10.md](CHANGES_2026-10.md).
+
+1. Set Believer to 120 bpm, and load annotated clips with song, bars, level and hands.
+2. Add a "score only the assigned bars" mode.
+3. Send every clip to review for now, and prepare the teacher marking sheets and the clip review screen.
+4. Small trial on about 5 annotated recordings, then 2 teachers mark about 30 clips: the first real accuracy numbers.
+5. Fit weights with `ras calibrate`, fix note duration, and retest the song check on new clips.
 6. Only if errors repeat on their keyboards: fine-tune Transkun (`ras finetune prepare/export`, CUDA only;
    see [DEPLOY.md](DEPLOY.md) section 4).
 7. Deploy to AWS (Terraform in `infra/terraform`, steps in [DEPLOY.md](DEPLOY.md)).
@@ -87,7 +89,7 @@ account, so the open items are repeated above.
 
 ```bash
 scripts/setup.sh                                   # creates .venv, installs, runs tests (Python 3.12, FFmpeg needed)
-.venv/bin/pytest                                   # fast suite, no model needed (119 tests)
+.venv/bin/pytest                                   # fast suite, no model needed (fast suite)
 .venv/bin/pytest -m slow                           # also runs Transkun and the downloaded models
 .venv/bin/ras models download                      # hFT, Kong, dynamics (checksummed)
 .venv/bin/ras criteria                             # the 22 criteria and what scores each
@@ -104,6 +106,7 @@ docker compose up -d --build                       # the AWS-shaped stack locall
 | `ras/core/` | audio, score, transcribe adapters, alignment, errors, expression, rubric, feedback |
 | `ras/core/criteria.py` | the 22 criteria and their models |
 | `ras/models/` | model registry, checksummed download, allow-list loader, vendored model code |
+| `ras/core/melody.py` | finds the melody on one-line songs, checks the playing fits the song |
 | `ras/segment/` | class splitter: alignment, region finding, song identification, clips, evaluation |
 | `ras/service/` | API, worker, queue, database, storage, review UI |
 | `ras/eval/` | metrics, benchmark, calibration, fine-tuning data |

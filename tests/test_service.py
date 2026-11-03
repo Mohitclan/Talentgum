@@ -210,6 +210,21 @@ def test_ui_is_served(env):
     assert r.status_code == 200 and "Recording Assessment" in r.text
 
 
+def test_criteria_groups_are_listed(env):
+    crit = env.client.get("/v1/criteria").json()
+    assert len(crit) == 22 and {c["group"] for c in crit} == {"note", "chord", "timing", "performance"}
+
+
+def test_frontend_is_served_when_built(tmp_path, monkeypatch):
+    import ras.service.api as api_mod
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "index.html").write_text("<title>TalentGum</title>")
+    monkeypatch.setattr(api_mod, "APP_DIR", tmp_path / "app")
+    c = TestClient(create_app(Settings(data_dir=tmp_path / "s", transcriber="ground-truth")))
+    assert "TalentGum" in c.get("/app/").text
+    assert c.get("/", follow_redirects=False).headers["location"] == "/app/"
+
+
 def test_teacher_profile_is_used_for_later_students(env):
     ids = []
     for k in range(2):  # two teacher recordings

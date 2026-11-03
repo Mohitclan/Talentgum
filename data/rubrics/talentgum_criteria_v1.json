@@ -62,5 +62,5 @@
   "options": {"allow_transposition": true, "review_confidence_threshold": 0.6, "pause_threshold_s": 1.5,
               "timing_tolerance_ms": 120, "second_opinion": ["hft"], "second_opinion_policy": "uncertain",
               "pedal_source": "primary",
-              "verify_missing_audio": false}
+              "verify_missing_audio": false, "isolate_melody": true, "min_reference_fit": 0.7}
 }

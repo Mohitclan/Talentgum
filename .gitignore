@@ -32,3 +32,7 @@ data/service/
 # downloaded model weights (ras models download)
 models/*
 !models/README.md
+
+# frontend (frontend/): dependencies and the build, which RAS serves at /app/
+frontend/node_modules/
+ras/service/app/
