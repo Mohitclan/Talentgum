@@ -36,7 +36,8 @@ from ras.core.verify import OnsetEvidence, mark_uncertain_missing
 from ras.models.hub import ModelHub, default_hub
 from ras.types import PedalEvent, PerfNote
 
-ANALYSIS_VERSION = "analysis-3"  # 2: expression measures, second opinions, teacher profiles; 3: melody isolation, reference fit
+# 2: expression measures, second opinions, teacher profiles; 3: melody isolation, reference fit
+ANALYSIS_VERSION = "analysis-3"
 
 
 def _py(obj):

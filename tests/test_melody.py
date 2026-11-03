@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from ras.core.melody import isolate_melody, is_single_line, reference_fit
+from ras.core.melody import is_single_line, isolate_melody, reference_fit
 from ras.core.rubric import load_rubric
 from ras.core.score.reference import load_reference
 from ras.core.transcribe.ground_truth import GroundTruthTranscriber
