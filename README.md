@@ -120,6 +120,27 @@ Plan, method and open items: [docs/CLASS_RECORDINGS.md](docs/CLASS_RECORDINGS.md
 * Results that claim most of the piece is wrong, or have low confidence, go to the review queue instead
   of being final. Teacher corrections are stored and are the ground truth `ras evaluate` uses.
 
+## TalentGum frontend (`frontend/`)
+
+A React app built from TalentGum's design mockup, on top of the `/v1` API: student dashboard, new
+assessment (upload), processing, results with a note-by-note roll, detailed analysis by section, and the
+teacher view with a report drawer.
+
+* **Teachers first:** a student sees a score only after a teacher has checked it and pressed
+  "Share with student" (that saves a review, so the assessment becomes `reviewed`).
+* **No logins yet:** a Student/Teacher switch in the sidebar. The API key, if the server needs one, goes
+  in Connection settings and stays in that browser.
+* Scores are grouped as Notes, Timing & rhythm, Chords and Expression, using `GET /v1/criteria`.
+
+```bash
+cd frontend && npm install && npm run build      # writes ras/service/app; `ras serve` then opens it at /app/
+npm run dev                                       # development on :5173, forwards /v1 to ras serve on :8000
+.venv/bin/python scripts/seed_demo.py             # demo results in data/demo, no AI model needed
+.venv/bin/ras serve --data-dir data/demo --no-with-worker
+```
+
+The Docker image builds the frontend in its own stage, so `docker compose up` serves it too.
+
 ## Run the AWS shape locally (Phase 3)
 
 ```bash
