@@ -2,6 +2,7 @@ import { CategoryCard, ErrorNote, Icon, Loading, Ring } from "../components/ui";
 import { NoteRoll, RollLegend } from "../components/NoteRoll";
 import { displayScore, fmtDate, groupScores, headline, REJECT_REASON, splitFeedback, strengths, visibleToStudent } from "../model";
 import { Redirect, useApp } from "../state";
+import { KidResults } from "./KidResults";
 import { useResult } from "./useResult";
 
 export function Results({ id }: { id: string }) {
@@ -21,28 +22,35 @@ export function Results({ id }: { id: string }) {
       <div className="col" style={{ gap: 20, maxWidth: 720 }}>
         <a className="back" onClick={back}>← Back</a>
         <h1>{songTitle(a.song_id)}</h1>
-        <div className="note-banner warn"><Icon name="info" />
-          <span>{REJECT_REASON[a.error_code ?? ""] ?? "This recording could not be assessed."}{teacher && a.error_detail ? ` (${a.error_detail})` : ""} Please try recording again in a quiet room, close to the keyboard.</span>
-        </div>
-        <button className="btn primary" style={{ alignSelf: "flex-start" }} onClick={() => go("new")}>Try again</button>
+        {teacher ? (
+          <div className="note-banner warn"><Icon name="info" />
+            <span>{REJECT_REASON[a.error_code ?? ""] ?? "This recording could not be assessed."}{a.error_detail ? ` (${a.error_detail})` : ""}</span>
+          </div>
+        ) : (
+          <div className="card kid-hero kid">
+            <h2 className="kid-title" style={{ fontSize: 28 }}>Oops, we couldn't hear it well</h2>
+            <p className="kid-sub">Let's try again! Find a quiet room, put the phone close to the keyboard, and play the whole song.</p>
+          </div>
+        )}
+        <button className={`btn ${teacher ? "primary" : "kid-btn"}`} style={{ alignSelf: "flex-start" }} onClick={() => go("new")}>Try again</button>
       </div>
     );
   }
   if (!teacher && !visibleToStudent(a)) {
     return (
       <div className="col" style={{ gap: 20, maxWidth: 720 }}>
-        <a className="back" onClick={back}>← Dashboard</a>
+        <a className="back" onClick={back}>← Home</a>
         <h1>{songTitle(a.song_id)}</h1>
-        <div className="card col" style={{ alignItems: "center", textAlign: "center", gap: 12, padding: 40 }}>
-          <div className="ico-box"><Icon name="people" size={22} /></div>
-          <h2>Your teacher is checking this one</h2>
-          <span className="muted" style={{ maxWidth: 440, lineHeight: 1.5 }}>
-            Your recording has been analysed. Your teacher looks at every result before it is shared, so your score and tips will appear here soon.
-          </span>
+        <div className="card kid-hero kid">
+          <div className="kid-wait"><span>★</span><span>★</span><span>★</span></div>
+          <h2 className="kid-title" style={{ fontSize: 28 }}>Your teacher is looking at it!</h2>
+          <p className="kid-sub">We listened to your playing. Your teacher will check it and send you your stars soon.</p>
         </div>
       </div>
     );
   }
+
+  if (!teacher) return <KidResults a={a} roll={r.roll} review={r.review} />;
 
   const score = displayScore(a, r.review);
   const groups = groupScores(a, criteria);

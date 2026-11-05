@@ -60,9 +60,9 @@ function Sidebar() {
         <>
           <div className="nav-h">Student</div>
           <nav className="nav">
-            <button className={page === "home" ? "on" : ""} onClick={() => go("home")}><Icon name="home" />Dashboard</button>
-            <button className={page === "new" ? "on" : ""} onClick={() => go("new")}><Icon name="newc" />New assessment</button>
-            <button className={page === "history" ? "on" : ""} onClick={() => go("history")}><Icon name="chart" />My results</button>
+            <button className={page === "home" ? "on" : ""} onClick={() => go("home")}><Icon name="home" />Home</button>
+            <button className={page === "new" ? "on" : ""} onClick={() => go("new")}><Icon name="newc" />Play a song</button>
+            <button className={page === "history" ? "on" : ""} onClick={() => go("history")}><Icon name="chart" />My songs</button>
           </nav>
         </>
       ) : (
