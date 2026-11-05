@@ -12,6 +12,14 @@ const STEPS = [
   { label: "Done", sub: "Score and feedback ready" },
 ];
 
+const KID_STEPS = [
+  { label: "Sent!", sub: "We got your song" },
+  { label: "Waiting", sub: "Your turn is coming" },
+  { label: "Listening", sub: "Hearing every note" },
+  { label: "Checking", sub: "Comparing with the music" },
+  { label: "Done!", sub: "Off to your teacher" },
+];
+
 export function Processing({ id }: { id: string }) {
   const { go, songTitle, me } = useApp();
   const a = useLoad(() => api.assessment(id), [id]);
@@ -32,16 +40,21 @@ export function Processing({ id }: { id: string }) {
     l: (i / 34) * 100, t: 14 + ((i * 37) % 9) * 10, w: 1.6 + ((i * 13) % 3),
   })), []);
 
-  const title = bad ? "We couldn't assess this recording" : finished ? "Analysis complete" : "Analysing your performance";
-  const sub = bad ? (REJECT_REASON[a.data?.error_code ?? ""] ?? "Please try recording again.")
-    : finished ? (me.role === "student" ? "Your teacher will check the result and share it with you." : "The result is ready to check.")
-    : "This usually takes about as long as the recording itself.";
+  const kid = me.role === "student";
+  const steps = kid ? KID_STEPS : STEPS;
+  const title = kid
+    ? (bad ? "Oops, we couldn't hear it well" : finished ? "All done!" : "We're listening to your song…")
+    : (bad ? "We couldn't assess this recording" : finished ? "Analysis complete" : "Analysing your performance");
+  const sub = kid
+    ? (bad ? "Try again in a quiet room, with the phone close to the keyboard." : finished ? "Your teacher will look at it and send you your stars soon." : "This takes about as long as your song.")
+    : (bad ? (REJECT_REASON[a.data?.error_code ?? ""] ?? "Please try recording again.")
+      : finished ? "The result is ready to check." : "This usually takes about as long as the recording itself.");
 
   return (
-    <div className="col" style={{ alignItems: "center", gap: 28, paddingTop: 24 }}>
+    <div className={`col ${kid ? "kid" : ""}`} style={{ alignItems: "center", gap: 28, paddingTop: 24 }}>
       <div className="col" style={{ alignItems: "center", textAlign: "center", gap: 8 }}>
         <span className="muted" style={{ fontSize: 13.5, fontWeight: 600 }}>{a.data ? songTitle(a.data.song_id) : " "}</span>
-        <h1 style={{ fontSize: 34 }}>{title}</h1>
+        <h1 className={kid ? "kid-title" : undefined} style={{ fontSize: 34 }}>{title}</h1>
         <span className="sub">{sub}</span>
       </div>
       {a.error && <ErrorNote error={a.error} onRetry={a.reload} />}
@@ -51,13 +64,13 @@ export function Processing({ id }: { id: string }) {
           {!finished && <div className="beam" />}
         </div>
         <div className="steps6">
-          {STEPS.map((st, i) => {
+          {steps.map((st, i) => {
             const state = i < at || (finished && !bad) ? "done" : i === at && !bad ? "now" : "";
             return (
               <div className="pstep" key={st.label}>
                 <div className="row" style={{ gap: 8 }}>
                   <div className={`pdot ${state}`}>{state === "done" ? <Icon name="check" size={13} stroke={3} /> : i + 1}</div>
-                  {i < STEPS.length - 1 && <div className={`pline ${i < at ? "done" : ""}`} />}
+                  {i < steps.length - 1 && <div className={`pline ${i < at ? "done" : ""}`} />}
                 </div>
                 <b style={{ fontSize: 13.5 }}>{st.label}</b>
                 <span className="muted" style={{ fontSize: 12, lineHeight: 1.4 }}>{st.sub}</span>

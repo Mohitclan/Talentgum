@@ -272,3 +272,92 @@ label.lbl { font-size: 12px; font-weight: 700; color: var(--muted); }
   .trow > :nth-child(n + 3):not(:nth-child(7)) { display: none; }
   h1 { font-size: 26px; }
 }
+
+/* ---- student side: made for kids (stars, flowers, badges, the song path) */
+:root {
+  --star: #ffc93c;
+  --star-edge: #f0a81c;
+  --star-off: #ece6da;
+  --kid-font: Fredoka, Figtree, system-ui, sans-serif;
+  --kid-btn: #ff7a59;
+  --kid-btn-dark: #ec5f3d;
+}
+.kid .kid-title { font-family: var(--kid-font); font-weight: 700; font-size: 40px; letter-spacing: -0.01em; margin: 0; text-align: center; color: var(--ink); }
+.kid .kid-h2 { font-family: var(--kid-font); font-weight: 600; font-size: 22px; margin: 0; }
+.kid .kid-sub { font-size: 17px; color: var(--ink-2); line-height: 1.5; text-align: center; margin: 4px 0 8px; }
+.kid .card { border-radius: 22px; }
+.kid-btn {
+  border: 0; background: var(--kid-btn); color: #fff; font-family: var(--kid-font); font-weight: 600; font-size: 18px;
+  padding: 13px 26px; border-radius: 999px; box-shadow: 0 3px 0 var(--kid-btn-dark);
+}
+.kid-btn:hover { background: var(--kid-btn-dark); }
+.kid-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--kid-btn-dark); }
+.kid-hero {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 24px 28px; text-align: center;
+  background: radial-gradient(circle at 50% 0%, #fff6dc 0%, #fff 70%);
+}
+.kid-song { font-family: var(--kid-font); font-weight: 600; font-size: 15px; color: var(--muted); }
+.stars { display: inline-flex; gap: 4px; align-items: center; }
+.kid-hero .stars svg { animation: pop 0.5s ease-out both; }
+.kid-hero .stars svg:nth-child(2) { animation-delay: 0.08s; }
+.kid-hero .stars svg:nth-child(3) { animation-delay: 0.16s; }
+.kid-hero .stars svg:nth-child(4) { animation-delay: 0.24s; }
+.kid-hero .stars svg:nth-child(5) { animation-delay: 0.32s; }
+@keyframes pop { 0% { transform: scale(0.2); opacity: 0; } 70% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+
+.garden { display: flex; justify-content: space-around; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 12px 0 4px; }
+.plant { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; min-width: 96px; }
+.plant b { font-family: var(--kid-font); font-weight: 600; font-size: 15px; }
+.plant span { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.sway { transform-origin: 50% 95%; animation: sway 3.5s ease-in-out infinite; }
+@keyframes sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
+
+.path { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 0; }
+.stone {
+  width: 54px; height: 54px; border-radius: 50%; border: 0; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 0; font-family: var(--kid-font); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.08);
+}
+.stone .stone-ico { font-size: 20px; line-height: 1; }
+.stone .stone-n { font-size: 11px; font-weight: 600; opacity: 0.8; }
+.stone.star { background: #fff1c4; color: #c9850c; }
+.stone.good { background: #def3d8; color: #3f8a3a; }
+.stone.practice { background: #ffe2d6; color: #d4572f; }
+.stone.on { outline: 3px solid var(--ink); }
+.stone:hover { transform: translateY(-2px); }
+.kid-legend .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.dot.star { background: #ffd765; } .dot.good { background: #9fd894; } .dot.practice { background: #ffb59a; }
+
+.bubble { background: #f5f6fd; border-radius: 16px; padding: 12px 16px; font-size: 15.5px; line-height: 1.5; color: var(--ink); position: relative; }
+.bubble.big { font-size: 17px; background: #fff8e6; }
+.kid-note { display: flex; gap: 12px; align-items: flex-start; }
+.kid-note .bubble { flex: 1; background: var(--card); border: 1px solid var(--line); }
+
+.badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.badge { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 14px 10px; border-radius: 18px; background: var(--paper); border: 1.5px dashed var(--field); opacity: 0.7; }
+.badge b { font-family: var(--kid-font); font-weight: 600; font-size: 15px; }
+.badge span { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.badge-coin { width: 52px; height: 52px; border-radius: 50%; display: flex !important; align-items: center; justify-content: center; font-size: 24px !important; font-weight: 700; background: var(--star-off); color: #b9b1a2 !important; }
+.badge.won { opacity: 1; border: 1.5px solid #f3d27a; background: #fffaf0; }
+.badge.won .badge-coin { background: linear-gradient(145deg, #ffd765, #f5ac2a); color: #fff !important; box-shadow: 0 3px 0 #d98f14; }
+
+.kid-tip { display: flex; gap: 12px; align-items: flex-start; font-size: 16.5px; line-height: 1.5; padding: 10px 12px; border-radius: 14px; background: #fff8f3; }
+.kid-tip-n { width: 28px; height: 28px; border-radius: 50%; background: var(--kid-btn); color: #fff; font-family: var(--kid-font); font-weight: 600; display: flex; align-items: center; justify-content: center; flex: none; }
+
+.star-box { align-items: center; justify-content: center; text-align: center; gap: 2px; background: radial-gradient(circle at 50% 30%, #fff6dc, #fff 75%); }
+.star-count { font-family: var(--kid-font); font-weight: 700; font-size: 48px; line-height: 1; }
+.kid-row b { font-family: var(--kid-font); font-weight: 600; }
+.kid-pill { display: inline-flex; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; font-family: var(--kid-font); align-self: center; }
+.kid-pill.wait { background: var(--brand-soft); color: var(--brand); }
+.kid-pill.bad { background: #ffe2d6; color: #d4572f; }
+.kid-wait { display: flex; gap: 8px; font-size: 34px; color: var(--star); }
+.kid-wait span { animation: pulse 1.4s infinite; }
+.kid-wait span:nth-child(2) { animation-delay: 0.2s; }
+.kid-wait span:nth-child(3) { animation-delay: 0.4s; }
+
+@media (max-width: 860px) {
+  .kid .kid-title { font-size: 30px; }
+  .stone { width: 46px; height: 46px; }
+  .plant { min-width: 72px; }
+  .kid-row { grid-template-columns: 44px minmax(0, 1fr) auto !important; }
+  .kid-row > :nth-child(4) { display: none; }
+}

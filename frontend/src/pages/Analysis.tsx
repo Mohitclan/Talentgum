@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ErrorNote, Icon, Loading } from "../components/ui";
 import { NoteRoll, RollLegend } from "../components/NoteRoll";
-import { criterionLabel, displayScore, fmtDate, splitFeedback, visibleToStudent, type Kind } from "../model";
+import { criterionLabel, displayScore, fmtDate, splitFeedback, type Kind } from "../model";
 import { Redirect, useApp } from "../state";
 import { useResult } from "./useResult";
 
@@ -24,7 +24,7 @@ export function Analysis({ id, bar }: { id: string; bar?: number }) {
   if (!r.data || !r.roll) return <Loading what="Loading the analysis" />;
   const { a } = r.data;
   const teacher = me.role === "teacher";
-  if (!teacher && !visibleToStudent(a)) return <Redirect to={["results", id]} />;
+  if (!teacher) return <Redirect to={["results", id]} />; // students get the song path on their results page
 
   const roll = r.roll;
   const sec = sel != null ? r.sections[sel] : null;

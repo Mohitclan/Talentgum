@@ -23,6 +23,7 @@ export function NewAssessment() {
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const kid = me.role === "student";
 
   useEffect(() => { if (!songId && songs.length) setSongId(songs[0].song_id); }, [songs, songId]);
 
@@ -54,15 +55,15 @@ export function NewAssessment() {
   }
 
   return (
-    <div className="col" style={{ gap: 28, maxWidth: 1040 }}>
+    <div className={`col ${kid ? "kid" : ""}`} style={{ gap: 28, maxWidth: 1040 }}>
       <div className="col">
-        <a className="back" onClick={() => go("home")}>← Dashboard</a>
-        <h1>Start a New Assessment</h1>
+        <a className="back" onClick={() => go("home")}>← {kid ? "Home" : "Dashboard"}</a>
+        <h1 className={kid ? "kid-title" : undefined} style={kid ? { textAlign: "left" } : undefined}>{kid ? "Play a song!" : "Start a New Assessment"}</h1>
       </div>
 
       <div className="new-grid">
         <div className="card col" style={{ gap: 14 }}>
-          <div className="row" style={{ gap: 8 }}><span className="step">1</span><h2 style={{ fontSize: 17 }}>Choose a song</h2></div>
+          <div className="row" style={{ gap: 8 }}><span className="step">1</span><h2 className={kid ? "kid-h2" : undefined} style={{ fontSize: kid ? 20 : 17 }}>{kid ? "Pick your song" : "Choose a song"}</h2></div>
           {songs.length > 5 && <input className="field" placeholder="Search songs" value={query} onChange={(e) => setQuery(e.target.value)} />}
           {songs.length === 0 ? (
             <div className="empty">No songs yet. A teacher adds songs (MusicXML or MIDI) in the admin tools.</div>
@@ -93,8 +94,8 @@ export function NewAssessment() {
             <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
               <span className="step">2</span>
               <div className="col" style={{ gap: 3 }}>
-                <h2 style={{ fontSize: 17 }}>Upload your performance</h2>
-                <span className="muted" style={{ fontSize: 14 }}>Upload an audio recording of your keyboard performance.</span>
+                <h2 className={kid ? "kid-h2" : undefined} style={{ fontSize: kid ? 20 : 17 }}>{kid ? "Send your recording" : "Upload your performance"}</h2>
+                <span className="muted" style={{ fontSize: 14 }}>{kid ? "Record yourself playing the whole song, then add it here." : "Upload an audio recording of your keyboard performance."}</span>
               </div>
             </div>
             {me.role === "teacher" && (
@@ -108,7 +109,7 @@ export function NewAssessment() {
               onDragLeave={() => setOver(false)}
               onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0]); }}>
               <div className="ico-box"><Icon name="upload" size={22} stroke={2} /></div>
-              <b style={{ fontSize: 15 }}>Drag and drop your recording here</b>
+              <b style={{ fontSize: 15 }}>{kid ? "Drop your recording here" : "Drag and drop your recording here"}</b>
               <span className="muted small">M4A, MP3 or WAV · one performance of the song · up to 5 minutes</span>
               <button className="btn sm" onClick={() => input.current?.click()}>Browse files</button>
               <input ref={input} type="file" accept={ACCEPT} hidden onChange={(e) => pick(e.target.files?.[0])} />
@@ -134,12 +135,12 @@ export function NewAssessment() {
           </div>
           <div className="note-banner">
             <Icon name="info" />
-            <span>Your performance will be compared with the music, note by note, for accuracy, timing and rhythm. Your teacher checks the result before you see your score.</span>
+            <span>{kid ? "Tip: play in a quiet room with the phone close to the keyboard. Your teacher will send you your stars!" : "The performance is compared with the music, note by note, for accuracy, timing and rhythm. Results are shared with the student after you check them."}</span>
           </div>
           {error && <ErrorNote error={error} />}
           {rubrics.data && !rubric && <ErrorNote error="No scoring rubric is set up yet. A teacher needs to add one in the admin tools." />}
           <div className="row" style={{ justifyContent: "flex-end" }}>
-            <button className="btn primary" disabled={!ready} onClick={begin} style={{ padding: "13px 24px", fontSize: 15 }}>Begin Assessment</button>
+            <button className={`btn ${kid ? "kid-btn" : "primary"}`} disabled={!ready} onClick={begin} style={kid ? undefined : { padding: "13px 24px", fontSize: 15 }}>{kid ? "Send my song" : "Begin Assessment"}</button>
           </div>
         </div>
       </div>
