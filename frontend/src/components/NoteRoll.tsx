@@ -97,6 +97,7 @@ export function RollLegend({ expected = false }: { expected?: boolean }) {
       <span><i className="sw missed" />Missed</span>
       <span><i className="sw extra" />Extra</span>
       <span><i className="sw unsure" />Not sure</span>
+      <span><i className="sw replayed" />Played again</span>
     </div>
   );
 }

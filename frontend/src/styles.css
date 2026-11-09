@@ -24,6 +24,7 @@
   --bad-soft: #f9e7e3;
   --extra: #8a4f9e;
   --unsure: #a9a397;
+  --replayed: #d6d0c4;
   --radius: 14px;
   color-scheme: light;
 }
@@ -167,6 +168,7 @@ label.lbl { font-size: 12px; font-weight: 700; color: var(--muted); }
 .sw.missed { border: 1.5px dashed var(--bad); }
 .sw.extra { background: var(--extra); }
 .sw.unsure { background: var(--unsure); }
+.sw.replayed { background: var(--replayed); }
 .sw.exp { border: 1px solid #bdb6aa; }
 .roll { display: flex; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; background: #fdfcfa; }
 .roll-keys { width: 46px; flex: none; border-right: 1px solid var(--line); }
@@ -184,6 +186,7 @@ label.lbl { font-size: 12px; font-weight: 700; color: var(--muted); }
 .roll-body .n.wrong { background: var(--bad); }
 .roll-body .n.extra { background: var(--extra); opacity: 0.85; }
 .roll-body .n.unsure { background: var(--unsure); }
+.roll-body .n.replayed { background: var(--replayed); }
 .roll-body .n.hit { cursor: pointer; }
 .roll-body .n.hit:hover { outline: 2px solid var(--ink); z-index: 2; }
 .roll-axis { position: relative; height: 24px; border-top: 1px solid var(--line); background: var(--paper); }
