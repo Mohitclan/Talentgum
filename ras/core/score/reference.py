@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -21,8 +21,10 @@ REF_DTYPE = [
     ("voice", "i4"),
     ("artic", "i4"),  # bit flags, see ARTIC_*
     ("dyn", "f8"),  # dynamics level of the marking in force (1 = pp .. 5 = ff), NaN if none
+    ("hand", "i1"),  # HAND_RIGHT (upper staff, first MIDI track), HAND_LEFT, or HAND_UNKNOWN
 ]
 DEFAULT_BPM = 100.0
+HAND_UNKNOWN, HAND_RIGHT, HAND_LEFT = 0, 1, 2
 
 ARTIC_STACCATO, ARTIC_STACCATISSIMO, ARTIC_TENUTO, ARTIC_ACCENT, ARTIC_LEGATO = 1, 2, 4, 8, 16
 _ARTIC_NAMES = {"staccato": ARTIC_STACCATO, "staccatissimo": ARTIC_STACCATISSIMO, "spiccato": ARTIC_STACCATISSIMO,
@@ -90,6 +92,11 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         score = pt.load_musicxml(str(path))
+        if len(score.parts) > 1:  # piano written as separate parts: the first is the right hand
+            for k, p in enumerate(score.parts):
+                if len({n.staff for n in p.notes_tied} - {None}) <= 1:
+                    for n in p.notes_tied:
+                        n.staff = 1 if k == 0 else 2
         part = pt.score.merge_parts(score.parts) if len(score.parts) > 1 else score.parts[0]
         _tag_slurs(pt, part)  # before unfolding, which drops slurs (note attributes survive it)
         if unfold_repeats:
@@ -97,7 +104,7 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
                 part = pt.score.unfold_part_maximal(part)
             except Exception as exc:  # unusual repeat structures: keep the written order
                 warns.append(f"repeat_unfold_failed: {exc}")
-        na = part.note_array(include_metrical_position=True)
+        na = part.note_array(include_metrical_position=True, include_staff=True)
         tempi = list(part.iter_all(pt.score.Tempo))
         measures = part.measure_number_map(na["onset_div"]) if len(na) else []
         marks = _performance_marks(pt, part, na)
@@ -127,13 +134,17 @@ def load_musicxml(path: str | Path, unfold_repeats: bool = True, bpm: float | No
     with_dur = na[na["duration_quarter"] > 0]
     divs = float(np.median(with_dur["duration_div"] / with_dur["duration_quarter"])) if len(with_dur) else 1.0
 
+    # upper staff = right hand, lower staff = left hand (a one-staff melody is the right hand)
+    staff = na["staff"] if "staff" in (na.dtype.names or ()) else np.zeros(len(na), dtype=int)
+    hands = [HAND_RIGHT if st == 1 else HAND_LEFT if st >= 2 else HAND_UNKNOWN for st in staff]
+
     rows = []
     for i, n in enumerate(na):
         on, du = float(n["onset_quarter"]), float(n["duration_quarter"])
         rows.append((
             "", int(n["pitch"]), on, du, to_sec(on), to_sec(on + du) - to_sec(on),
             int(measures[i]), float(n["rel_onset_div"]) / divs + 1.0, int(n["voice"]),
-            marks["artic"][i], marks["dyn"][i],
+            marks["artic"][i], marks["dyn"][i], hands[i],
         ))
     ref = _finish(rows, bpm, _sha256(path), "musicxml", warns)
     ref.pedal_spans, ref.hairpins = marks["pedal"], marks["hairpins"]
@@ -204,15 +215,18 @@ def load_midi(path: str | Path, bpm: float | None = None) -> Reference:
     def beats(t: float) -> float:  # quarter notes from ticks, so tempo changes are respected
         return pm.time_to_tick(t) / pm.resolution
 
-    notes = sorted((n for inst in pm.instruments if not inst.is_drum for n in inst.notes),
-                   key=lambda n: (n.start, n.pitch))
+    # first track = right hand, the others = left hand; a single track is not split
+    tracks = [inst for inst in pm.instruments if not inst.is_drum and inst.notes]
+    notes = sorted(((n, HAND_RIGHT if k == 0 else HAND_LEFT) if len(tracks) > 1 else (n, HAND_UNKNOWN)
+                    for k, inst in enumerate(tracks) for n in inst.notes),
+                   key=lambda x: (x[0].start, x[0].pitch))
     rows = []
-    for n in notes:
+    for n, hand in notes:
         m = int(np.searchsorted(downbeats, n.start + 1e-6, side="right"))
         m_start = downbeats[m - 1] if m >= 1 else 0.0
         rows.append((
             "", n.pitch, beats(n.start), beats(n.end) - beats(n.start), n.start, n.end - n.start,
-            max(m, 1), beats(n.start) - beats(m_start) + 1.0, 1, 0, np.nan,
+            max(m, 1), beats(n.start) - beats(m_start) + 1.0, 1, 0, np.nan, hand,
         ))
     return _finish(rows, bpm, _sha256(path), "midi", warns)
 
@@ -225,3 +239,18 @@ def load_reference(path: str | Path, unfold_repeats: bool = True, bpm: float | N
     if suffix in (".xml", ".musicxml", ".mxl"):
         return load_musicxml(path, unfold_repeats=unfold_repeats, bpm=bpm)
     raise ValueError(f"unsupported reference format: {suffix}")
+
+
+def select_hands(ref: Reference, hands: str) -> Reference:
+    """Keep the notes of one hand ("right", "left") or all ("both"). Notes of unknown hand are always kept."""
+    if hands == "both" or not len(ref.notes):
+        return ref
+    want = HAND_RIGHT if hands == "right" else HAND_LEFT
+    keep = (ref.notes["hand"] == want) | (ref.notes["hand"] == HAND_UNKNOWN)
+    if keep.all():
+        return ref
+    notes = ref.notes[keep].copy()
+    notes["id"] = [f"s{i}" for i in range(len(notes))]
+    opt = ref.optional[(ref.optional["hand"] == want) | (ref.optional["hand"] == HAND_UNKNOWN)]
+    return replace(ref, notes=notes, optional=opt, n_measures=int(notes["measure"].max()) if len(notes) else 0,
+                   warnings=[*ref.warnings, f"scored_{hands}_hand_only_{int((~keep).sum())}_notes_left_out"])

@@ -397,6 +397,59 @@ def profile_build(
     console.print(f"Profile from {len(inputs)} recording(s) written to {out}")
 
 
+@profile_app.command("from-classes")
+def profile_from_classes(
+    annotations: Path = typer.Argument(..., exists=True, file_okay=False, help="`ras segment` output directory"),
+    songs: Path = typer.Option(..., exists=True, file_okay=False, help="Folder of <song_id>.mxl/.mid"),
+    out: Path = typer.Option(Path("data/profiles"), help="Writes <song_id>.profile.json per song"),
+    include_likely: bool = typer.Option(False, help="Also use clips marked likely_teacher but not yet confirmed"),
+    rubric: Path = typer.Option(DEFAULT_RUBRIC.parent / "talentgum_criteria_v1.json"),
+    transcriber: str = typer.Option("transkun"),
+):
+    """Teacher benchmarks from the teacher's playing in class recordings (clips with player "teacher")."""
+    from collections import defaultdict
+
+    from ras.core.profile import build_profile
+    from ras.core.score.reference import load_reference
+    from ras.core.transcribe import get_transcriber
+    from ras.pipeline import assess as run_assess
+
+    picked: dict[str, list[tuple[Path, float]]] = defaultdict(list)
+    for ann in sorted(annotations.glob("*/*.json")):
+        if ann.name.endswith(".notes.json"):
+            continue
+        for clip in json.loads(ann.read_text()).get("clips", []):
+            teacher = clip.get("player") == "teacher" or (include_likely and clip.get("likely_teacher")
+                                                          and clip.get("player") is None)
+            if teacher and clip.get("file") and clip.get("status") != "rejected":
+                picked[clip["song_id"]].append((annotations / clip["file"], clip.get("assess_start_s") or 0.0))
+    if not picked:
+        console.print("[red]No teacher clips found.[/red] Set \"player\": \"teacher\" on confirmed clips, "
+                      "or use --include-likely.")
+        raise typer.Exit(1)
+    rb, tr = load_rubric(rubric), get_transcriber(transcriber)
+    out.mkdir(parents=True, exist_ok=True)
+    for song_id, clips in sorted(picked.items()):
+        files = [f for f in songs.iterdir() if f.stem == song_id and f.suffix.lower() in (".mxl", ".musicxml",
+                                                                                          ".xml", ".mid", ".midi")]
+        if not files:
+            console.print(f"[yellow]{song_id}: no song file in {songs}, skipped[/yellow]")
+            continue
+        ref = load_reference(sorted(files)[0])
+        inputs, bpms = [], []
+        for audio, start in clips:
+            res = run_assess(ref, audio, rb, tr, start_s=start)
+            if res.status == "completed":
+                inputs.append(res.scoring_inputs)
+                bpms.append(res.summary.get("mean_bpm") or 0)
+        if not inputs:
+            console.print(f"[yellow]{song_id}: no usable teacher clip[/yellow]")
+            continue
+        (out / f"{song_id}.profile.json").write_text(json.dumps(build_profile(inputs, ref.sha256), indent=1))
+        note = "" if len(inputs) >= 2 else " (only one clip: add more for a fair tolerance)"
+        console.print(f"{song_id}: {len(inputs)} teacher clip(s), {sum(bpms) / len(bpms):.0f} bpm{note}")
+
+
 @app.command()
 def calibrate(
     grades: Path = typer.Argument(..., exists=True, help="CSV: result, <criterion ids...>, overall"),

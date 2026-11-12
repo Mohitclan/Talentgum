@@ -30,7 +30,7 @@ from ras.core.melody import isolate_melody, reference_fit
 from ras.core.profile import compare as compare_profile
 from ras.core.rubric import Rubric, score_analysis
 from ras.core.rubric.engine import models_needed
-from ras.core.score.reference import Reference, load_reference
+from ras.core.score.reference import Reference, load_reference, select_hands
 from ras.core.transcribe.base import Transcriber
 from ras.core.verify import OnsetEvidence, mark_uncertain_missing
 from ras.models.hub import ModelHub, default_hub
@@ -276,6 +276,7 @@ def assess(
     t0 = time.perf_counter()
     ref = (reference if isinstance(reference, Reference)
            else load_reference(reference, unfold_repeats=cfg.unfold_repeats))
+    ref = select_hands(ref, rubric.options.hands)
     res.versions["reference_sha256"] = ref.sha256[:16]
     res.warnings += ref.warnings
     mark("reference", t0)
@@ -309,6 +310,10 @@ def assess(
     analysis = analyze(ref, perf, alignment, AnalysisConfig(
         pause_threshold_s=rubric.options.pause_threshold_s))
     res.warnings += analysis.notes
+    if rubric.options.octave_errors == "ignore":
+        n_oct = analysis.accept_octave_slips()
+        if n_oct:
+            res.warnings.append(f"{n_oct}_octave_slips_not_counted_at_this_level")
     mark("align_and_analyse", t0)
 
     t0 = time.perf_counter()
