@@ -3,17 +3,19 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api, ApiError, type Criterion, type Song } from "./api";
 
 export type Role = "student" | "teacher";
+export type Level = "beginner" | "advanced";
 
 export interface Identity {
   role: Role;
   studentId: string; // the RAS student_id the student view is for
   teacherName: string; // recorded as the reviewer
+  level: Level; // the student's level: picks the scoring rules
 }
 
 const ID_STORE = "tg.identity";
 
 function loadIdentity(): Identity {
-  const fallback: Identity = { role: "teacher", studentId: "", teacherName: "Teacher" };
+  const fallback: Identity = { role: "teacher", studentId: "", teacherName: "Teacher", level: "beginner" };
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(ID_STORE) ?? "{}") };
   } catch {

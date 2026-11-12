@@ -31,7 +31,8 @@ from ras.synth.render import render_notes, write_audio
 from ras.synth.songs import SONGS
 
 ROOT = Path(__file__).resolve().parents[1]
-RUBRIC = ROOT / "data" / "rubrics" / "talentgum_criteria_v1.json"
+RUBRICS = [ROOT / "data" / "rubrics" / f"talentgum_{n}_v1.json" for n in ("criteria", "beginner", "advanced")]
+LEVEL = {"aarav": "beginner", "rohan": "beginner", "meera": "advanced", "ishaan": "advanced"}
 
 # (student, song, performance, teacher review or None)
 TAKES = [
@@ -77,13 +78,14 @@ def main() -> None:
             refs[sid] = load_reference(path)
             client.post("/v1/songs", json={"song_id": sid, "title": song.title,
                                            "reference_file_id": upload(path, "reference")}).raise_for_status()
-        client.post("/v1/rubrics", json=json.loads(RUBRIC.read_text())).raise_for_status()
+        for rubric in RUBRICS:
+            client.post("/v1/rubrics", json=json.loads(rubric.read_text())).raise_for_status()
 
         for i, (student, sid, perf, review) in enumerate(TAKES):
             truth = simulate_performance(refs[sid], PerfSpec(seed=100 + i, **perf))
             audio = write_audio(render_notes(truth.notes, seed=i), tmp / f"{student}_{sid}_{i}.m4a")
             r = client.post("/v1/assessments", json={"song_id": sid, "recording_file_id": upload(audio, "audio"),
-                                                     "rubric_id": "talentgum-criteria", "student_id": student})
+                                                     "rubric_id": f"talentgum-{LEVEL[student]}", "student_id": student})
             r.raise_for_status()
             asm = r.json()["assessment_id"]
             tr.set_notes(truth.notes)
@@ -92,7 +94,7 @@ def main() -> None:
             if review and res["status"] in ("completed", "review_required"):
                 client.post(f"/v1/assessments/{asm}/review", json={"reviewer": "Ms. Rao", **review}).raise_for_status()
                 res["status"] = "reviewed"
-            print(f"{student:7} {sid:11} {res['status']:16} score={res['total_score']}")
+            print(f"{student:7} {LEVEL[student]:9} {sid:11} {res['status']:16} score={res['total_score']}")
     print(f"Demo data in {args.data_dir}")
 
 

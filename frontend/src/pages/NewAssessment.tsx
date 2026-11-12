@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, uploadAudio, type Song } from "../api";
 import { ErrorNote, Icon } from "../components/ui";
-import { useApp, useLoad } from "../state";
+import { useApp, useLoad, type Level } from "../state";
+import { LEVELS } from "../model";
 
 const ACCEPT = ".m4a,.mp3,.wav,.aac,.flac,.ogg,audio/*";
 const MAX_MB = 50;
@@ -24,12 +25,15 @@ export function NewAssessment() {
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const kid = me.role === "student";
+  const [level, setLevelState] = useState<Level>(me.level ?? "beginner");
+  const setLevel = (l: Level) => { setLevelState(l); if (kid) setMe({ level: l }); };
 
   useEffect(() => { if (!songId && songs.length) setSongId(songs[0].song_id); }, [songs, songId]);
 
-  // the client's full criteria rubric when it is loaded, otherwise the newest one
-  const rubric = (rubrics.data ?? []).filter((r) => r.rubric_id === "talentgum-criteria").sort((a, b) => b.version - a.version)[0]
-    ?? (rubrics.data ?? [])[0];
+  // the level's rubric (talentgum-beginner / talentgum-advanced), else the full criteria rubric, else the newest
+  const newest = (id: string) => (rubrics.data ?? []).filter((r) => r.rubric_id === id).sort((a, b) => b.version - a.version)[0];
+  const rubric = newest(`talentgum-${level}`) ?? newest("talentgum-criteria") ?? (rubrics.data ?? [])[0];
+  const levelRubricMissing = rubrics.data != null && !newest(`talentgum-${level}`);
   const song = songs.find((s) => s.song_id === songId);
   const shown = songs.filter((s) => s.title.toLowerCase().includes(query.toLowerCase()));
   const tooBig = file != null && file.size > MAX_MB * 1024 * 1024;
@@ -97,6 +101,14 @@ export function NewAssessment() {
                 <h2 className={kid ? "kid-h2" : undefined} style={{ fontSize: kid ? 20 : 17 }}>{kid ? "Send your recording" : "Upload your performance"}</h2>
                 <span className="muted" style={{ fontSize: 14 }}>{kid ? "Record yourself playing the whole song, then add it here." : "Upload an audio recording of your keyboard performance."}</span>
               </div>
+            </div>
+            <div className="col">
+              <span className="lbl">{kid ? "My level" : "Level"}</span>
+              <div className="seg" style={{ alignSelf: "flex-start" }}>
+                {LEVELS.map((l) => <button key={l.id} className={level === l.id ? "on" : ""} onClick={() => setLevel(l.id)}>{l.label}</button>)}
+              </div>
+              {!kid && <span className="muted" style={{ fontSize: 12.5 }}>{LEVELS.find((l) => l.id === level)!.rules}</span>}
+              {!kid && levelRubricMissing && <span className="muted" style={{ fontSize: 12.5, color: "var(--warn-ink)" }}>The {level} rubric is not loaded yet; the general TalentGum rubric will be used.</span>}
             </div>
             {me.role === "teacher" && (
               <div className="col">

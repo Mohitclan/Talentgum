@@ -110,15 +110,16 @@ export const isBlack = (p: number) => [1, 3, 6, 8, 10].includes(p % 12);
 
 // ---- note classification for display
 
-export type Kind = "ok" | "timing" | "wrong" | "missed" | "extra" | "unsure";
+export type Kind = "ok" | "timing" | "wrong" | "missed" | "extra" | "unsure" | "replayed";
 
 export const TIMING_MS = 120; // the rubric's onset window
 
 export function kindOf(n: Note): Kind {
   switch (n.status) {
     case "correct":
-    case "replayed":
       return n.onset_dev_ms != null && Math.abs(n.onset_dev_ms) > TIMING_MS ? "timing" : "ok";
+    case "replayed":
+      return "replayed"; // an abandoned attempt the student played again: not scored, not counted as correct
     case "wrong_pitch":
     case "wrong_octave":
       return "wrong";
@@ -133,6 +134,7 @@ export function kindOf(n: Note): Kind {
 
 export const KIND_LABEL: Record<Kind, string> = {
   ok: "Played correctly", timing: "Timing off", wrong: "Wrong note", missed: "Missed", extra: "Extra", unsure: "Not sure",
+  replayed: "Played again",
 };
 
 // ---- the note roll: every note placed on the performance's own timeline
@@ -268,3 +270,15 @@ const STRENGTH_DETAIL: Record<string, string> = {
   rhythm_accuracy: "Long and short notes had the right lengths.", fluency: "The piece flowed without hesitations.",
   note_order: "Every phrase came in the right sequence.", wrong_octave: "You played in the right octave.",
 };
+
+// ---- levels: each has its own rubric (data/rubrics/talentgum_<level>_v1.json)
+
+export const LEVELS = [
+  { id: "beginner", label: "Beginner", rules: "Right hand only · octave not judged" },
+  { id: "advanced", label: "Advanced", rules: "Hands as written in the song · octave judged" },
+] as const;
+
+export function levelOfRubric(rubricId: string): string | null {
+  const m = rubricId.match(/^talentgum-(beginner|advanced)$/);
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) : null;
+}

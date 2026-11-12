@@ -71,7 +71,14 @@ error-detection stages alone, with perfect transcription.
 .venv/bin/ras assess ref.musicxml take.m4a --rubric data/rubrics/talentgum_criteria_v1.json
 .venv/bin/ras profile build ref.musicxml teacher1.m4a teacher2.m4a --out ref.profile.json
 .venv/bin/ras calibrate grades.csv --rubric data/rubrics/talentgum_criteria_v1.json --out rubric_v2.json
+.venv/bin/ras assess ref.mxl take.m4a --rubric data/rubrics/talentgum_beginner_v1.json   # or talentgum_advanced_v1
+.venv/bin/ras profile from-classes data/classes --songs songs/ --out data/profiles      # teacher benchmarks
 ```
+
+**Levels.** `talentgum_beginner_v1.json` scores the right hand only and does not judge octaves.
+`talentgum_advanced_v1.json` expects every hand in the song file and judges octaves. Both
+target 120 bpm, or the song's own tempo when closer, and the tempo score never drops below 40. The client's
+decisions are in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 Every criterion on the client's form is scored by `talentgum_criteria_v1.json`. A model is called only
 when a criterion needs it, and a criterion that cannot be measured for a recording (no marks in the

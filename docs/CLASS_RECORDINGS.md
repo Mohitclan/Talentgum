@@ -141,8 +141,13 @@ batch job, outside the live service, so the 5 minute and 15 minute limits of the
 
 ## Risks
 
-- **The teacher also plays.** A demonstration looks the same as a student attempt. Options: skip the
-  first playing of the song in each class, or let the teacher check mark it. Not decided.
+- **The teacher also plays.** A demonstration looks the same as a student attempt. The client wants the teacher's
+  playing used as the benchmark for each song (tempo, note length, loud/soft). `ras segment` now marks a complete,
+  near-perfect attempt as `likely_teacher` (with `teacher_hints`, for example `first_playing_of_song`) and sends it
+  to review. The checker sets `"player": "teacher"` or `"student"` in the annotation. Then
+  `ras profile from-classes data/classes --songs songs/ --out data/profiles` builds one benchmark per song from the
+  confirmed teacher clips (`--include-likely` to try it before anyone has checked). A strong student can look like
+  the teacher, so the suggestion is never used unconfirmed in production.
 - **Online-meeting audio.** Video calls can cut out or quieten the piano when someone talks. Test on a
   few real classes before trusting any numbers.
 - **Harder songs.** Believer and Happy Birthday are longer or harder to match than the simple songs.
