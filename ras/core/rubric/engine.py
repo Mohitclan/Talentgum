@@ -89,6 +89,10 @@ class RubricOptions(BaseModel):
     isolate_melody: bool = False
     # below this share of the played stretch found, the score is withheld: it may be a different song. 0: off
     min_reference_fit: float = 0.0
+    # student level rules (TalentGum: beginners play the right hand only and are not judged on octaves;
+    # advanced students may play both hands and are)
+    hands: Literal["both", "right", "left"] = "both"  # which hand's notes of the score are expected
+    octave_errors: Literal["count", "ignore"] = "count"  # "ignore": a right note in another octave is correct
 
 
 class Rubric(BaseModel):
@@ -163,10 +167,13 @@ def _order_pct(a: Analysis) -> float | None:
 
 
 def _tempo_dev(a: Analysis, p: dict) -> float | None:
+    """`target_bpm` overrides the score's tempo; with `or_score_tempo` the closer of the two counts."""
     if not a.mean_bpm:
         return None
-    target = p.get("target_bpm") or a.ref_bpm
-    return abs(a.mean_bpm / target - 1.0) * 100.0
+    targets = [p.get("target_bpm") or a.ref_bpm]
+    if p.get("or_score_tempo") and a.ref_bpm:
+        targets.append(a.ref_bpm)
+    return min(abs(a.mean_bpm / t - 1.0) * 100.0 for t in targets)
 
 
 def _fluency(a: Analysis, p: dict) -> float | None:

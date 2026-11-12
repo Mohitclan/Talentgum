@@ -43,6 +43,8 @@ class SegmentConfig:
     full_coverage: float = 0.85  # share of the song's steps an attempt covers to count as a full attempt
     clip_pad_s: float = 2.0
     max_clip_s: float = 300.0  # the assessment's limit
+    # a complete attempt this clean is probably the teacher demonstrating (a person confirms it)
+    teacher_precision: float = 0.95
 
 
 @dataclass
@@ -196,7 +198,28 @@ def _describe(mel, iv_all, songs, song, al, first, last, cfg) -> dict:
         "status": "needs_review" if reasons else "auto",
         "review_reasons": reasons,
         "reviewer": None,
+        "player": None,  # "teacher" or "student", set by the person who checks the clip
+        "likely_teacher": False,
+        "teacher_hints": [],
     }
+
+
+def mark_teacher_candidates(clips: list[dict], cfg: SegmentConfig) -> None:
+    """Teacher and students play the same songs in a class. A complete, near-perfect attempt is most likely
+    the teacher, especially the first time a song is heard. It is only a suggestion: a person confirms it."""
+    seen: set[str] = set()
+    for clip in sorted(clips, key=lambda c: c["start_s"]):
+        hints = []
+        if clip["coverage"] == "full" and clip["match_score"] >= cfg.teacher_precision:
+            hints.append("near_perfect_full_attempt")
+        if clip["song_id"] not in seen:
+            hints.append("first_playing_of_song")
+            seen.add(clip["song_id"])
+        clip["teacher_hints"] = hints
+        clip["likely_teacher"] = "near_perfect_full_attempt" in hints
+        if clip["likely_teacher"]:
+            clip["review_reasons"].append("probably_teacher_please_confirm")
+            clip["status"] = "needs_review"
 
 
 def find_clips(notes: list[PerfNote], songs: list[SongModel], cfg: SegmentConfig | None = None) -> dict:
@@ -210,4 +233,5 @@ def find_clips(notes: list[PerfNote], songs: list[SongModel], cfg: SegmentConfig
                         "notes": len(run), "clips": len(attempts)})
         clips += attempts
     clips.sort(key=lambda c: c["start_s"])
+    mark_teacher_candidates(clips, cfg)
     return {"playing_regions": regions, "clips": clips, "config": asdict(cfg)}

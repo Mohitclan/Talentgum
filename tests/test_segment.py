@@ -213,3 +213,13 @@ def test_evaluation_against_labels(refs, models):
     ev = evaluate(rec, labels)
     assert (ev["found"], ev["wrong_song"], ev["missed"], ev["false_clips"]) == (1, 1, 1, 1)
     assert ev["false_clips_per_hour"] == 1.0 and ev["median_start_error_s"] < 1.0
+
+
+def test_clean_first_attempt_is_suggested_as_teacher(refs, models):
+    # the teacher demonstrates cleanly, then a student plays with mistakes
+    notes = perform(refs["mary"], 100) + perform(refs["mary"], 240, seed=5, n_wrong_pitch=4, n_missing=3)
+    clips = find_clips(notes, models)["clips"]
+    teacher, student = clips
+    assert teacher["likely_teacher"] and "first_playing_of_song" in teacher["teacher_hints"]
+    assert teacher["status"] == "needs_review" and "probably_teacher_please_confirm" in teacher["review_reasons"]
+    assert not student["likely_teacher"] and student["player"] is None

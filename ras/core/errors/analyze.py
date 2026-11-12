@@ -98,6 +98,17 @@ class Analysis:
                 r.status = "uncertain"
                 self.n_uncertain += 1
 
+    def accept_octave_slips(self) -> int:
+        """Right note in another octave counts as correct (levels where octaves are not judged)."""
+        n = 0
+        for r in self.results:
+            if r.status == "wrong_octave":
+                r.status = "correct"
+                n += 1
+        self.n_wrong_octave -= n
+        self.n_correct += n
+        return n
+
     def mark_unconfirmed_extra(self, result_indices: list[int]) -> None:
         for i in result_indices:
             r = self.results[i]

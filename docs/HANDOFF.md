@@ -45,7 +45,23 @@ engine). Third-party checkpoints load through an allow-list loader (`ras/models/
   them, and teacher recordings are not a reference. Teachers are still needed to mark student clips.
 - Students play right hand, left hand or both. No paired audio and MIDI exists.
 - AWS, Docker, REST. Corrected MIDI may be kept for training; teachers verify jointly with us.
-- Only the Ode to Joy MXL and MIDI have been received (notes only, right hand, no marks).
+- MXL and MIDI of all five songs have been received (melody only, right hand, no marks). Only Ode to Joy is in git
+  (`reference/songs/`); the others are kept outside git.
+
+### Client decisions, client meeting of Nov 2026
+
+| Topic | Decision | Where it lives |
+|---|---|---|
+| Levels | Beginner and advanced, each with its own rubric. The level comes from the client's age-group folders (folder layout to follow) | `data/rubrics/talentgum_beginner_v1.json`, `talentgum_advanced_v1.json` |
+| Hands | Beginners: right hand only. Advanced: both hands when the song has them | rubric option `hands` (`right` / `both`); the loader reads the hand from the staff or MIDI track |
+| Auto-accompaniment | No rule: dropped at the client's request. Chords heard under the tune still send the result to a teacher, as before | |
+| Octave | Not judged for beginners; judged for advanced | option `octave_errors` (`ignore` / `count`); a whole-song octave shift is accepted at both levels |
+| Tempo | 120 bpm for now; a song at another tempo must not score zero | tempo criterion: teacher benchmark first, else 120 or the score's tempo (whichever is closer), never below 40 |
+| Teacher recordings | Taken from the class recordings, where teacher and students both play | `ras segment` marks `likely_teacher` clips; a person sets `"player": "teacher"`; `ras profile from-classes` builds the benchmarks |
+| Still to come | Song files with chords and marks, keyboard details, teacher marking | |
+
+Open: the age-group folder layout, so the level can be read from it; a reliable way to tell the teacher from the
+student in a class.
 
 ## Honest limits
 
@@ -60,13 +76,13 @@ engine). Third-party checkpoints load through an allow-list loader (`ras/models/
 
 ## Still needed from the client
 
-1. MXL/MIDI of Twinkle, Mary, Happy Birthday and Believer.
-2. Three or four real class recordings to prototype on, and about five with a teacher's start and end times
+1. MXL/MIDI of the five songs with chords, loud/soft, articulation and pedal marks (promised).
+2. Keyboard details: touch sensitivity and sustain pedal (promised).
+3. Teacher marking of 30-50 student clips per song (promised).
+4. Three or four real class recordings to prototype on, and about five with a teacher's start and end times
    for each song.
-3. Decisions: the hands rule (what to score when only one hand is played), what to do when the teacher
-   plays in class, keyboard types, parent permission to use recordings for training, retention period,
-   AWS region and account, volume of human verification, acceptance criteria.
-4. The GPU's type and how long we can use it.
+5. Decisions: parent permission to use recordings for training, retention period, AWS region and account,
+   volume of human verification, acceptance criteria, and the open points under "Client decisions".
 
 The full question list is the Claude Docs file https://claude.ai/artifact/DopkKPuerj5395D7rvgNBr
 (sections "What to ask first", "Answers received", "Still open after the reply"). It lives in the old

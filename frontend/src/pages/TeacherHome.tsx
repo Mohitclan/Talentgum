@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Assessment } from "../api";
 import { ErrorNote, Icon, Loading, StatusPill } from "../components/ui";
-import { displayScore, fmtDate, groupScores, initials, REVIEW_REASON } from "../model";
+import { displayScore, fmtDate, groupScores, initials, levelOfRubric, REVIEW_REASON } from "../model";
 import { useApp, useLoad } from "../state";
 import { useResult } from "./useResult";
 
@@ -63,6 +63,7 @@ export function TeacherHome({ selected }: { selected?: string }) {
             <div className="col" style={{ gap: 2 }}><b style={{ fontSize: 17 }}>{sel.student_id ?? "Unknown student"}</b><span className="muted small">Student</span></div>
           </div>
           <Fact k="Song" v={songTitle(sel.song_id)} />
+          <Fact k="Level" v={levelOfRubric(sel.rubric.id) ?? "General"} />
           <Fact k="Date" v={fmtDate(sel.created_at)} />
           <Fact k="AI score" v={sel.total_score != null ? `${Math.round(sel.total_score)} / 100` : "–"} big />
           <div style={{ flex: 1 }} />
@@ -97,7 +98,7 @@ export function TeacherHome({ selected }: { selected?: string }) {
           return (
             <div key={a.assessment_id} className={`trow ${sel?.assessment_id === a.assessment_id ? "sel" : ""}`} onClick={() => go("teacher", a.assessment_id)}>
               <span className="row" style={{ gap: 10, fontWeight: 700 }}><span className="avatar grey">{initials(a.student_id ?? "?")}</span>{a.student_id ?? "–"}</span>
-              <span>{songTitle(a.song_id)}</span>
+              <span className="col" style={{ gap: 1 }}>{songTitle(a.song_id)}{levelOfRubric(a.rubric.id) && <span className="muted" style={{ fontSize: 12 }}>{levelOfRubric(a.rubric.id)}</span>}</span>
               <b className="tnum" style={{ fontSize: 14.5 }}>{displayScore(a) ?? "–"}</b>
               <span className="tnum" style={{ color: "var(--ink-2)" }}>{gv("note") ?? "–"}</span>
               <span className="tnum" style={{ color: "var(--ink-2)" }}>{gv("timing") ?? "–"}</span>

@@ -268,3 +268,15 @@ const STRENGTH_DETAIL: Record<string, string> = {
   rhythm_accuracy: "Long and short notes had the right lengths.", fluency: "The piece flowed without hesitations.",
   note_order: "Every phrase came in the right sequence.", wrong_octave: "You played in the right octave.",
 };
+
+// ---- levels: each has its own rubric (data/rubrics/talentgum_<level>_v1.json)
+
+export const LEVELS = [
+  { id: "beginner", label: "Beginner", rules: "Right hand only · octave not judged" },
+  { id: "advanced", label: "Advanced", rules: "Hands as written in the song · octave judged" },
+] as const;
+
+export function levelOfRubric(rubricId: string): string | null {
+  const m = rubricId.match(/^talentgum-(beginner|advanced)$/);
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) : null;
+}
