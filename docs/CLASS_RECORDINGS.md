@@ -46,7 +46,8 @@ least half of its notes are matched in the aligned stretch.
   licence before use). Skips the talking so only the piano parts are transcribed. Worth it only if GPU
   time turns out to be a problem.
 - **Match against the song's sound** (render each MXL to audio, then match with chroma features and
-  subsequence DTW). A cross-check for uncertain matches. It does not depend on transcription errors.
+  subsequence DTW). It does not depend on transcription errors. Now planned as the first stage, with Transkun
+  only on the parts it finds: [TRANSCRIPTION_PLAN.md](TRANSCRIPTION_PLAN.md).
 
 ## Output
 
